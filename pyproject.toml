@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Reproducible, updateable provisioning for a herdr-engineering fleet"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["PyYAML>=6.0", "jsonschema>=4.20"]
+dependencies = ["PyYAML>=6.0", "jsonschema>=4.20", "ansible-core~=2.21.5"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.5", "types-PyYAML", "types-jsonschema"]
@@ -27,7 +27,7 @@ select = ["E", "F", "W", "I", "UP"]
 include = ["herdr_fleet*"]
 
 [tool.setuptools.package-data]
-herdr_fleet = ["schemas/*.json"]
+herdr_fleet = ["schemas/*.json", "ansible/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
