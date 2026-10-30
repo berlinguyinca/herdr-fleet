@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "fleet-config.yaml",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "hosts"],
+  "properties": {
+    "version": {"const": 1},
+    "hosts": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/host"}
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ci_server": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "external_url": {"type": "string", "pattern": "^https?://\\S+$"},
+            "ingress": {"enum": ["tunnel", "public"]}
+          }
+        },
+        "gateway": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url"],
+          "properties": {"url": {"type": "string", "pattern": "^https?://\\S+$"}}
+        }
+      }
+    },
+    "woodpecker": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repos": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$"}
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {"path": {"type": "string", "minLength": 1}}
+    }
+  },
+  "$defs": {
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["roles", "os", "connection"],
+      "properties": {
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "baseline", "toolchain", "herdr", "herdr-engineering", "pi-runtime",
+              "secret-scan", "controller", "gateway", "ci-server", "ci-agent"
+            ]
+          }
+        },
+        "os": {"enum": ["debian", "ubuntu", "macos"]},
+        "connection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["address", "user"],
+          "properties": {
+            "address": {"type": "string", "minLength": 1},
+            "user": {"type": "string", "minLength": 1},
+            "jump_host": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  }
+}

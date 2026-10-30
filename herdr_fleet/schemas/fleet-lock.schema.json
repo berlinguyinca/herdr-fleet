@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "fleet.lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "node", "herdr", "repos", "clis", "images", "herdr_fleet"],
+  "properties": {
+    "version": {"const": 1},
+    "node": {"$ref": "#/$defs/binary"},
+    "herdr": {"$ref": "#/$defs/binary"},
+    "repos": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["herdr-engineering", "pi-engineering", "autospec"],
+      "properties": {
+        "herdr-engineering": {"$ref": "#/$defs/commit"},
+        "pi-engineering": {"$ref": "#/$defs/commit"},
+        "autospec": {"$ref": "#/$defs/commit"}
+      }
+    },
+    "clis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pi-cli", "codex", "gitleaks", "woodpecker-cli"],
+      "properties": {
+        "pi-cli": {"$ref": "#/$defs/exact_version"},
+        "codex": {"$ref": "#/$defs/exact_version"},
+        "gitleaks": {"$ref": "#/$defs/exact_version"},
+        "woodpecker-cli": {"$ref": "#/$defs/exact_version"}
+      }
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/image"}
+    },
+    "herdr_fleet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version"],
+      "properties": {"version": {"$ref": "#/$defs/exact_version"}}
+    }
+  },
+  "$defs": {
+    "exact_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "binary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "sha256"],
+      "properties": {
+        "version": {"$ref": "#/$defs/exact_version"},
+        "sha256": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"pattern": "^(?:linux|darwin)-(?:x64|arm64)$"},
+          "additionalProperties": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest"],
+      "properties": {
+        "repository": {"type": "string", "pattern": "^[^@\\s]+$"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    }
+  }
+}
