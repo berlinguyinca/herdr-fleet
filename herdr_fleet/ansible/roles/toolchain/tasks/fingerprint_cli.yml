@@ -1,0 +1,37 @@
+---
+- name: installed {{ cli.name }}
+  ansible.builtin.slurp:
+    src: "{{ toolchain_prefix }}/lib/node_modules/{{ cli.package }}/package.json"
+  register: fp_pkg
+  failed_when: false
+  check_mode: false
+
+- name: shim for {{ cli.command }}
+  ansible.builtin.stat:
+    path: "{{ toolchain_shim_dir }}/{{ cli.command }}"
+  register: fp_shim
+
+# A non-interactive login shell with a clean environment: what a service or a job would see.
+- name: where a non-interactive shell finds {{ cli.command }}
+  ansible.builtin.command:
+    argv:
+      - env
+      - -i
+      - "HOME={{ toolchain_home }}"
+      - PATH=/usr/local/bin:/usr/bin:/bin
+      - bash
+      - -lc
+      - "command -v {{ cli.command }}"
+  register: fp_resolved
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: add {{ cli.name }}
+  ansible.builtin.set_fact:
+    fp_clis: >-
+      {{ fp_clis | combine({cli.name: {
+      'version': ((fp_pkg.content | b64decode | from_json).version if fp_pkg.content is defined else None),
+      'shim_path': toolchain_shim_dir ~ '/' ~ cli.command,
+      'shim_present': fp_shim.stat.exists,
+      'resolved_path': (fp_resolved.stdout | trim if fp_resolved.rc == 0 else None)}}) }}

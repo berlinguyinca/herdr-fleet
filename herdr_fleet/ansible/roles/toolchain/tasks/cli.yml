@@ -1,0 +1,35 @@
+---
+- name: probe installed {{ cli.name }}
+  ansible.builtin.slurp:
+    src: "{{ toolchain_prefix }}/lib/node_modules/{{ cli.package }}/package.json"
+  register: toolchain_cli_probe
+  failed_when: false
+  check_mode: false
+
+- name: work out the installed {{ cli.name }} version
+  ansible.builtin.set_fact:
+    toolchain_cli_installed: >-
+      {{ (toolchain_cli_probe.content | b64decode | from_json).version
+      if toolchain_cli_probe.content is defined else 'missing' }}
+
+# --prefix keeps the install out of every nvm; PATH makes npm's own `env node` use the managed one.
+- name: install {{ cli.package }}@{{ cli.version }}
+  ansible.builtin.command:
+    argv:
+      - "{{ toolchain_prefix }}/bin/npm"
+      - install
+      - --global
+      - --prefix
+      - "{{ toolchain_prefix }}"
+      - --no-audit
+      - --no-fund
+      - "{{ cli.package }}@{{ cli.version }}"
+  environment:
+    PATH: "{{ toolchain_prefix }}/bin:{{ ansible_facts.env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+  when: toolchain_cli_installed != cli.version
+
+- name: shim {{ cli.command }}
+  ansible.builtin.template:
+    src: shim.sh.j2
+    dest: "{{ toolchain_shim_dir }}/{{ cli.command }}"
+    mode: "0755"

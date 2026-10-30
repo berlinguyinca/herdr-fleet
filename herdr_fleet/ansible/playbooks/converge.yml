@@ -1,0 +1,32 @@
+---
+# One host at a time (serial: 1); a failure stops the run (any_errors_fatal). Roles are chosen per
+# host from fleet_roles (inventory var). Tags select the pass: no tag filter = plan --check,
+# --skip-tags fingerprint = apply, --tags fingerprint = verify.
+- name: Converge the fleet
+  hosts: all
+  serial: 1
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - name: Gather facts
+      ansible.builtin.setup:
+        gather_subset: ["min", "env"]
+      tags: [always]
+
+    - name: Role toolchain
+      ansible.builtin.include_role:
+        name: toolchain
+        apply:
+          tags: [converge]
+      when: "'toolchain' in fleet_roles"
+      tags: [converge]
+
+    # Read-only (probes run even in check mode); apply runs it again as its own verify pass.
+    - name: Fingerprint
+      ansible.builtin.include_role:
+        name: toolchain
+        tasks_from: fingerprint
+        apply:
+          tags: [fingerprint]
+      tags: [fingerprint]
+      when: "'toolchain' in fleet_roles"
