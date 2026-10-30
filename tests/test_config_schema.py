@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from herdr_fleet.config import ConfigError, load_config
+from herdr_fleet.roles import ROLE_ORDER
 from tests.helpers import CONFIG_EXAMPLE, Doc, example_config, write_yaml
 
 
@@ -96,20 +98,19 @@ def test_bad_repo_name_rejected(tmp_path: Path) -> None:
 def test_ci_agent_without_server_rejected(tmp_path: Path) -> None:
     doc = example_config()
     _hosts(doc)["host-a"]["roles"] = ["baseline"]  # type: ignore[index]
-    del _services(doc)["ci_server"]["external_url"]  # type: ignore[call-overload]
     _expect_error(doc, tmp_path, "ci-agent", "ci_server")
 
 
 def test_ci_agent_with_external_url_only_is_valid(tmp_path: Path) -> None:
     doc = example_config()
     _hosts(doc)["host-a"]["roles"] = ["baseline"]  # type: ignore[index]
+    _services(doc)["ci_server"]["external_url"] = "https://ci.example.com"  # type: ignore[index]
     path = write_yaml(tmp_path / "c.yaml", doc)
     assert len(load_config(path).hosts) == 2
 
 
 def test_ci_agent_with_local_server_only_is_valid(tmp_path: Path) -> None:
     doc = example_config()
-    del _services(doc)["ci_server"]["external_url"]  # type: ignore[call-overload]
     path = write_yaml(tmp_path / "c.yaml", doc)
     assert len(load_config(path).hosts) == 2
 
@@ -124,3 +125,19 @@ def test_ci_server_without_services_section_rejected(tmp_path: Path) -> None:
     doc = example_config()
     del doc["services"]
     _expect_error(doc, tmp_path, "ci-server", "ingress")
+
+
+def test_schema_role_enum_matches_role_order() -> None:
+    schema = json.loads(
+        (
+            Path(__file__).resolve().parent.parent / "herdr_fleet/schemas/fleet-config.schema.json"
+        ).read_text()
+    )
+    enum = schema["$defs"]["host"]["properties"]["roles"]["items"]["enum"]
+    assert tuple(enum) == ROLE_ORDER
+
+
+def test_ci_server_role_with_external_url_rejected(tmp_path: Path) -> None:
+    doc = example_config()
+    _services(doc)["ci_server"]["external_url"] = "https://ci.example.com"  # type: ignore[index]
+    _expect_error(doc, tmp_path, "ci-server", "external_url", "either")

@@ -38,7 +38,8 @@ arrives in slice 2.
 
 Cross-checks: a `ci-agent` host needs a CI server (a host with `ci-server`, or
 `services.ci_server.external_url`); `ci-server` needs `services.ci_server.ingress`
-(`tunnel` or `public`).
+(`tunnel` or `public`). A `ci-server` host and `external_url` are mutually exclusive:
+either provision a server here or point at an existing one.
 
 ## Development
 

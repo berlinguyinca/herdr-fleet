@@ -139,6 +139,12 @@ def _cross_check_errors(path: Path, config: FleetConfig) -> list[str]:
                 f"{path}: hosts.{host.name}.roles: role 'ci-agent' needs a CI server; give a "
                 "host the 'ci-server' role or set services.ci_server.external_url"
             )
+        if "ci-server" in host.roles and config.ci_external_url is not None:
+            errors.append(
+                f"{path}: services.ci_server.external_url: host '{host.name}' has role "
+                "'ci-server' but an external_url is also set; use either a provisioned "
+                "server or an existing one, not both"
+            )
         if "ci-server" in host.roles and config.ci_ingress is None:
             errors.append(
                 f"{path}: services.ci_server.ingress: host '{host.name}' has role 'ci-server', "

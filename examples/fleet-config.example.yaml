@@ -16,7 +16,6 @@ hosts:
       jump_host: host-a
 services:
   ci_server:
-    external_url: https://ci.example.com
     ingress: tunnel
   gateway:
     url: https://gateway.example.com
