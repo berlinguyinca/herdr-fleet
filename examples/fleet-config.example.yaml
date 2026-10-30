@@ -1,0 +1,26 @@
+# Example fleet-config.yaml. Generic names only; keep your real file outside the repo.
+version: 1
+hosts:
+  host-a:
+    os: debian
+    roles: [baseline, toolchain, herdr, herdr-engineering, pi-runtime, secret-scan, controller, ci-server]
+    connection:
+      address: host-a.example.com
+      user: fleet
+  host-b:
+    os: ubuntu
+    roles: [baseline, toolchain, herdr, herdr-engineering, secret-scan, ci-agent]
+    connection:
+      address: host-b.example.com
+      user: fleet
+      jump_host: host-a
+services:
+  ci_server:
+    ingress: tunnel
+  gateway:
+    url: https://gateway.example.com
+woodpecker:
+  repos:
+    - example-org/example-repo
+secrets:
+  path: ~/.config/herdr-fleet/vault
