@@ -159,6 +159,14 @@ vault, enrolls the controller, and runs `plan`.
   restored backup reaches the same fingerprint. This is the exit gate.
 - A macOS converge smoke test where a runner is available.
 
+## Extending the fleet
+
+- **New capability = new role.** One Ansible role, its pins in `fleet.lock`, a row in the roles
+  table. It inherits plan, apply, verify, staggering and rollback; it never gets its own script or timer.
+- **Compatibility.** `fleet.lock` and `fleet-config.yaml` carry a schema `version`. New fields are
+  optional with safe defaults; a breaking change bumps the version and the loader prints the migration.
+- **Adding a role** is documented in `docs/adding-a-role.md` once slice 1 lands.
+
 ## Slices
 
 1. Schemas (`fleet.lock`, `fleet-config`), loader, `plan` skeleton, CI.
