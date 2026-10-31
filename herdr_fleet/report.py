@@ -20,6 +20,7 @@ EXIT_DRIFT = 2
 _CHANGING = {"changed", "would_change"}
 _BROKEN = {"failed", "unreachable"}
 _MAX_DIFF_PARTS = 8
+NOT_ATTEMPTED = "not attempted: the run stopped or never reached this host"
 
 
 class RoleStatus(StrEnum):
@@ -80,9 +81,12 @@ class HostReport:
     fingerprint: Fingerprint | None
     errors: tuple[str, ...]
     changed_count: int = 0
+    attempted: bool = True
 
     @property
     def status(self) -> str:
+        if not self.attempted:
+            return "not-attempted"
         if self.errors or any(r.status is RoleStatus.FAILED for r in self.roles):
             return "failed"
         return "drift" if any(r.status is RoleStatus.DRIFT for r in self.roles) else "ok"
@@ -91,6 +95,7 @@ class HostReport:
         return {
             "host": self.host,
             "status": self.status,
+            "attempted": self.attempted,
             "changed": self.changed_count,
             "errors": list(self.errors),
             "roles": [r.to_json() for r in self.roles],
@@ -183,6 +188,8 @@ def _host_report(
     pins: ToolchainPins,
     expect_fingerprint: bool,
 ) -> HostReport:
+    if not events and fingerprint is None:
+        return HostReport(host, (), None, (NOT_ATTEMPTED,), attempted=False)
     errors = [f"{e.task}: {e.msg}" for e in events if e.role is None and e.status in _BROKEN]
     results: list[RoleResult] = []
     for role in roles:
@@ -225,7 +232,7 @@ def build_reports(
 
 def check_exit_code(reports: Sequence[HostReport]) -> int:
     """0 no drift, 2 drift, 1 error (errors outrank drift)."""
-    if any(r.status == "failed" for r in reports):
+    if any(r.status in ("failed", "not-attempted") for r in reports):
         return EXIT_ERROR
     return EXIT_DRIFT if any(r.status == "drift" for r in reports) else EXIT_OK
 

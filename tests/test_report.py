@@ -11,6 +11,7 @@ from herdr_fleet.report import (
     EXIT_DRIFT,
     EXIT_ERROR,
     EXIT_OK,
+    NOT_ATTEMPTED,
     HostReport,
     RoleStatus,
     apply_exit_code,
@@ -193,3 +194,18 @@ def test_summarize_text_diff() -> None:
 
 def test_summarize_empty() -> None:
     assert summarize_diff([]) == ""
+
+
+def test_host_with_no_events_is_not_attempted_not_missing_fingerprint(pins: ToolchainPins) -> None:
+    ran, skipped = build_reports(
+        parse_events(task("failed", "directories exist", host="host-a")),
+        {"host-a": ("toolchain",), "host-b": ("toolchain",)},
+        pins,
+    )
+    assert ran.status == "failed"
+    assert skipped.status == "not-attempted" and not skipped.attempted
+    assert skipped.errors == (NOT_ATTEMPTED,)
+    assert "no fingerprint" not in " ".join(skipped.errors)
+    assert skipped.to_json()["attempted"] is False
+    assert check_exit_code([skipped]) == EXIT_ERROR
+    assert apply_exit_code([skipped]) == EXIT_ERROR

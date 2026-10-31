@@ -75,7 +75,9 @@ def run_playbook(
         inventory_file = Path(tmp) / "inventory.yml"
         vars_file = Path(tmp) / "extra-vars.json"
         inventory_file.write_text(yaml.safe_dump(inventory))
-        vars_file.write_text(json.dumps(extra_vars))
+        # Only apply stops at the first failure; check and verify must report every host.
+        run_vars = {**extra_vars, "fleet_fail_fast": mode is Mode.APPLY}
+        vars_file.write_text(json.dumps(run_vars))
         command = [
             str(executable or ansible_playbook_executable()),
             "-i",
@@ -91,7 +93,5 @@ def run_playbook(
             )
         except OSError as exc:
             reason = exc.strerror or type(exc).__name__
-            return RunResult(
-                EXIT_COMMAND_NOT_RUNNABLE, "", f"cannot run {command[0]}: {reason}"
-            )
+            return RunResult(EXIT_COMMAND_NOT_RUNNABLE, "", f"cannot run {command[0]}: {reason}")
     return RunResult(done.returncode, done.stdout, done.stderr)

@@ -29,7 +29,7 @@ def _role_lines(role: RoleResult) -> list[str]:
 def render_hosts(reports: Sequence[HostReport]) -> str:
     lines: list[str] = []
     for report in reports:
-        lines.append(f"{report.host}: {report.status.upper()}")
+        lines.append(f"{report.host}: {report.status.upper().replace('-', ' ')}")
         lines.extend(f"  error: {e}" for e in report.errors)
         for role in report.roles:
             lines.extend(_role_lines(role))

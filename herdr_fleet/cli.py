@@ -195,7 +195,7 @@ def _run_apply(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -
         parse_events(applied.stdout), roles, pins, expect_fingerprint=False
     )
     errors = _runner_errors(applied, applied_reports)
-    if errors or any(r.status == "failed" for r in applied_reports):
+    if errors or any(r.status in ("failed", "not-attempted") for r in applied_reports):
         _emit_reports(
             "apply", applied_reports, errors, EXIT_ERROR, args.json, "apply failed; not verified"
         )

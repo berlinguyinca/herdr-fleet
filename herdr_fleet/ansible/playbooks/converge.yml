@@ -1,32 +1,44 @@
 ---
-# One host at a time (serial: 1); a failure stops the run (any_errors_fatal). Roles are chosen per
-# host from fleet_roles (inventory var). Tags select the pass: no tag filter = plan --check,
-# --skip-tags fingerprint = apply, --tags fingerprint = verify.
+# One host at a time (serial: 1). Roles are chosen per host from fleet_roles (inventory var).
+# Tags select the pass: no tag filter = plan --check, --skip-tags fingerprint = apply,
+# --tags fingerprint = verify.
+#
+# A failed host must not poison the hosts after it. Ansible ends a serial play when a whole batch
+# fails, so the work runs in a block whose rescue clears the failure: read-only passes carry on
+# with the next host. apply (fleet_fail_fast) is the exception: it re-raises, which stops the run
+# before another host is touched; hosts never reached are reported as "not attempted".
 - name: Converge the fleet
   hosts: all
   serial: 1
-  any_errors_fatal: true
   gather_facts: false
   tasks:
-    - name: Gather facts
-      ansible.builtin.setup:
-        gather_subset: ["min", "env"]
-      tags: [always]
+    - name: One host
+      block:
+        - name: Gather facts
+          ansible.builtin.setup:
+            gather_subset: ["min", "env"]
+          tags: [always]
 
-    - name: Role toolchain
-      ansible.builtin.include_role:
-        name: toolchain
-        apply:
+        - name: Role toolchain
+          ansible.builtin.include_role:
+            name: toolchain
+            apply:
+              tags: [converge]
+          when: "'toolchain' in fleet_roles"
           tags: [converge]
-      when: "'toolchain' in fleet_roles"
-      tags: [converge]
 
-    # Read-only (probes run even in check mode); apply runs it again as its own verify pass.
-    - name: Fingerprint
-      ansible.builtin.include_role:
-        name: toolchain
-        tasks_from: fingerprint
-        apply:
+        # Read-only (probes run even in check mode); apply runs it again as its own verify pass.
+        - name: Fingerprint
+          ansible.builtin.include_role:
+            name: toolchain
+            tasks_from: fingerprint
+            apply:
+              tags: [fingerprint]
           tags: [fingerprint]
-      tags: [fingerprint]
-      when: "'toolchain' in fleet_roles"
+          when: "'toolchain' in fleet_roles"
+      rescue:
+        - name: Stop the run at the first failed host
+          ansible.builtin.fail:
+            msg: apply stops at the first failed host; the remaining hosts were not touched
+          when: fleet_fail_fast | default(false) | bool
+          tags: [always]
