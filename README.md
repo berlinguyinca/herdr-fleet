@@ -2,9 +2,9 @@
 
 Reproducible, updateable provisioning for a herdr-engineering fleet.
 
-**Status: slice 2.** Schemas, loader, `plan`, the `toolchain` role, `plan --check` (drift
-report) and a minimal `apply` exist. Other roles are reported as `not-implemented` and are
-skipped. The design is in
+**Status: slice 3.** Schemas, loader, `plan`, the `baseline`, `toolchain`, `herdr`,
+`herdr-engineering` and `pi-runtime` roles, `plan --check` (drift report) and a minimal `apply`
+exist. Other roles are reported as `not-implemented` and are skipped. The design is in
 [docs/specs/0001-declarative-fleet-provisioning.md](docs/specs/0001-declarative-fleet-provisioning.md).
 
 ## Install
@@ -71,6 +71,42 @@ managed bin first on `PATH` and then exec the real CLI. Changing the shell's def
 (nvm, etc.) therefore cannot make `pi` vanish. `node` itself is deliberately not shimmed.
 `gitleaks` and `woodpecker-cli` are out of scope for this slice.
 
+### Other roles (slice 3)
+
+- **`herdr`** (no root): downloads the pinned herdr release asset, verifies its sha256 from
+  `fleet.lock` (`herdr.sha256.<platform>`, the `digest` of each GitHub release asset) before
+  installing, and installs a real file `~/.local/bin/herdr` (0755). A wrong checksum fails before
+  anything is installed. It never starts, restarts or updates a running herdr server; a stale
+  server is reported informationally only.
+- **`herdr-engineering`** (no root): stages the pinned commit with the vendored release stager
+  into a write-once release directory, builds the `herdr-eng` venv, links `~/.local/bin/herdr-eng`,
+  writes `~/.config/herdr-engineering/fabric.env` (0600, from `services.gateway.url`, plus
+  `services.control_plane.url` only when set), renders the fabric agent unit and installs the Pi
+  build gate. The service is only managed when a systemd user manager exists. Needs Python 3.12 or
+  newer (`python3` on the target's `PATH`).
+- **`pi-runtime`** (no root): **staging only**. Puts the pinned pi-engineering commit on disk,
+  installs its dependencies with the managed toolchain's `npm`, and registers the release in
+  `~/.pi/agent/settings.json` (other settings are preserved). It never reloads, restarts or
+  signals Pi, never touches missions and never deletes an older release; activation belongs to
+  the rollout coordinator. Rollout revisions must equal `repos.pi-engineering`.
+- **`baseline`**: required packages (`git curl ca-certificates python3 python3-venv xz-utils`) plus
+  `baseline.extra_packages` from the config, the state/config directories, linger and an
+  informational Tailscale probe. **It is the only role that may use root**, and only for package
+  installation and enabling linger. Probes and `plan --check` never need root or a password. When
+  root is needed and unavailable, apply fails with the exact command to run once, for example
+  `sudo apt-get install -y jq`.
+
+`herdr-engineering` needs `services.gateway.url` and the `herdr` role on the same host;
+`pi-runtime` needs `toolchain` on the same host.
+
+Repository clone URLs are pinned in the lock's optional `repo_urls` (`herdr-engineering`,
+`pi-engineering`, `autospec`; HTTPS only). They have no built-in defaults: a URL change is a trust
+change, so a role that clones a repository fails naming the missing key.
+
+Not automated: systemd user units and linger (no user manager in the test containers) and macOS.
+Run `plan --check` and `apply` once on a real Debian host and a real Mac as a manual canary before
+rolling a lock to the fleet.
+
 ### Apply
 
 ```bash
@@ -99,7 +135,7 @@ either provision a server here or point at an existing one.
 scripts/ci.sh    # ruff, pytest with >=80% branch coverage, example validation, container tests if docker exists
 ```
 
-Container tests (real Node and npm downloads, so network is needed) run in Docker and in
+Container tests (real Node, npm and herdr downloads and clones of public repositories, so network is needed) run in Docker and in
 Apptainer, never against your home directory:
 
 ```bash

@@ -60,6 +60,16 @@ script or timer (spec 0001, "Extending the fleet").
 10. **Container scenarios.** Add scenarios under `tests/containers/` (fresh, converged,
     idempotent, drift, failure) against real downloads. See [testing.md](testing.md).
 
+**Privilege rule.** Roles run as the connecting user and write only under `$HOME`. `baseline` is
+the only role with `become`, and only for package installation and linger; every probe and check
+mode runs unprivileged. A new role that needs root must go through `baseline`, not add `become`.
+A test scans the other roles for it.
+
+**Pinning a downloaded binary.** Take the sha256 from the publisher's own metadata (for herdr, the
+`digest` of each asset in
+`https://api.github.com/repos/herdrdev/herdr/releases/tags/v<version>`), re-hash at least one
+downloaded file, and put one digest per platform in `fleet.lock`.
+
 Lessons from the toolchain role: pin and verify downloads (`get_url` with `checksum:
 sha256:...` never extracts an unverified file); extract to a `.partial` directory and rename;
 give the user a stable entry point (shim) rather than relying on the shell's PATH; and

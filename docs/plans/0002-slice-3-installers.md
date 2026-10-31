@@ -1,6 +1,6 @@
 # 0002 - Slice 3: `herdr`, `herdr-engineering`, `pi-runtime`, `baseline` installers
 
-Status: proposed (implementation plan for spec 0001, slice 3)
+Status: implemented (T0-T10) on `feat/slice-3-installers`, pending the manual canary (section 7: systemd user units, linger, macOS). Implementation plan for spec 0001, slice 3.
 Branch: `feat/slice-3-installers`
 
 Citations: `HE:` means the read-only checkout of herdr-engineering (`ansible/...`, `scripts/...`,
