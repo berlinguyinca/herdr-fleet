@@ -7,11 +7,12 @@ without privileges. Tailscale and the Python version are informational and never
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Final
 
 from herdr_fleet import sections
-from herdr_fleet.config import FleetConfig
+from herdr_fleet.config import ConfigError, FleetConfig
 from herdr_fleet.fingerprint import Difference, Fingerprint, FingerprintError
 
 ROLE = "baseline"
@@ -19,6 +20,11 @@ SECTION = "baseline"
 
 REQUIRED_PACKAGES: Final = ("git", "curl", "ca-certificates", "python3", "python3-venv", "xz-utils")
 MACOS_COMMANDS: Final = ("git", "curl", "python3")
+
+# Same pattern as fleet-config.schema.json (a test keeps them equal), enforced again in
+# baseline_pins because the names reach apt-get: a trailing "-" means REMOVE, a trailing "+" means
+# install, and a leading "-" is an option.
+PACKAGE_PATTERN: Final = r"^[a-z0-9](?:[a-z0-9+.-]*[a-z0-9.])?$(?!\n)"
 
 PACKAGE_STATES: Final = ("installed", "missing")
 TAILSCALE_STATES: Final = ("up", "down", "absent")
@@ -49,6 +55,15 @@ class BaselinePins:
 
 
 def baseline_pins(config: FleetConfig) -> BaselinePins:
+    bad = [n for n in config.baseline_extra_packages if not re.fullmatch(PACKAGE_PATTERN, n)]
+    if bad:
+        raise ConfigError(
+            [
+                f"fleet-config.yaml: baseline.extra_packages: {name!r} is not a plain Debian "
+                f"package name (must match {PACKAGE_PATTERN})"
+                for name in bad
+            ]
+        )
     packages = tuple(dict.fromkeys((*REQUIRED_PACKAGES, *config.baseline_extra_packages)))
     return BaselinePins(packages=packages, macos_commands=MACOS_COMMANDS, dirs=DIRS)
 

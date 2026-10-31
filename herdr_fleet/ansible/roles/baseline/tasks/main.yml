@@ -78,7 +78,7 @@
 
 - name: install the missing packages
   ansible.builtin.command:
-    argv: "{{ ['apt-get', 'install', '-y', '--no-install-recommends'] + baseline_apt_names }}"
+    argv: "{{ ['apt-get', 'install', '-y', '--no-install-recommends', '--'] + baseline_apt_names }}"
   environment:
     DEBIAN_FRONTEND: noninteractive
   become: "{{ not baseline_is_root }}"

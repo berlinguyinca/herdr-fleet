@@ -95,6 +95,26 @@ BAD_CASES: list[tuple[str, Mutator, str]] = [
         _set(["repo_urls"], {"mystery": "https://git.example.com/a.git"}),
         "mystery",
     ),
+    (
+        "repo_urls trailing newline",
+        _set(["repo_urls"], {"autospec": "https://git.example.com/a.git\n"}),
+        "repo_urls.autospec",
+    ),
+    (
+        "repo_urls jinja",
+        _set(["repo_urls"], {"autospec": "https://git.example.com/{{ lookup('pipe','id') }}"}),
+        "repo_urls.autospec",
+    ),
+    (
+        "repo_urls quote",
+        _set(["repo_urls"], {"autospec": 'https://git.example.com/a"b'}),
+        "repo_urls.autospec",
+    ),
+    (
+        "repo_urls percent",
+        _set(["repo_urls"], {"autospec": "https://git.example.com/%7B"}),
+        "repo_urls.autospec",
+    ),
     ("repo_urls branch spec", _set(["repo_urls"], {"autospec": "main"}), "repo_urls.autospec"),
 ]
 

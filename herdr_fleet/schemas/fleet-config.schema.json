@@ -20,7 +20,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "external_url": {"type": "string", "pattern": "^https?://\\S+$"},
+            "external_url": {"type": "string", "pattern": "^https?://[^\\s{}\"'\\\\%$@]+$(?!\\n)"},
             "ingress": {"enum": ["tunnel", "public"]}
           }
         },
@@ -28,13 +28,13 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["url"],
-          "properties": {"url": {"type": "string", "pattern": "^https?://\\S+$"}}
+          "properties": {"url": {"type": "string", "pattern": "^https?://[^\\s{}\"'\\\\%$@]+$(?!\\n)"}}
         },
         "control_plane": {
           "type": "object",
           "additionalProperties": false,
           "required": ["url"],
-          "properties": {"url": {"type": "string", "pattern": "^https?://\\S+$"}}
+          "properties": {"url": {"type": "string", "pattern": "^https?://[^\\s{}\"'\\\\%$@]+$(?!\\n)"}}
         }
       }
     },
@@ -45,7 +45,7 @@
         "extra_packages": {
           "type": "array",
           "uniqueItems": true,
-          "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]*$"}
+          "items": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9+.-]*[a-z0-9.])?$(?!\\n)"}
         }
       }
     },

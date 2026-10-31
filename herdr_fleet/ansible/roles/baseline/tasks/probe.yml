@@ -11,7 +11,7 @@
 
 - name: installed apt packages
   ansible.builtin.command:
-    argv: [dpkg-query, -W, "-f=${db:Status-Abbrev}", "{{ item }}"]
+    argv: [dpkg-query, -W, "-f=${db:Status-Abbrev}", --, "{{ item }}"]
   loop: "{{ baseline_packages }}"
   register: baseline_dpkg
   failed_when: false

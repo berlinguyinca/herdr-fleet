@@ -271,3 +271,25 @@ def test_only_the_apt_and_linger_tasks_carry_privilege_escalation() -> None:
     assert sum("apt-get" in v for v in escalated.values()) == 2
     play = yaml.safe_load((ansible_dir() / "playbooks" / "converge.yml").read_text())
     assert "become" not in yaml.safe_dump(play)
+
+
+def test_a_package_name_that_looks_like_an_option_is_a_package_not_an_option(home: Path) -> None:
+    # Without "--", dpkg-query would take "-f=ii" as a format option and list every package
+    # as installed; as a package name it does not exist.
+    found = section(baseline_packages=["dpkg", "-f=ii"])
+    assert found.packages["-f=ii"] == "missing"
+
+
+def test_apt_and_dpkg_calls_end_option_parsing_before_the_package_names() -> None:
+    argvs: dict[str, list[str]] = {}
+    for name in ("main.yml", "probe.yml"):
+        for task in tasks_of(ROLE / "tasks" / name):
+            command = task.get("ansible.builtin.command")
+            if isinstance(command, dict) and isinstance(command.get("argv"), (list, str)):
+                argvs[str(task["name"])] = (
+                    command["argv"] if isinstance(command["argv"], list) else [command["argv"]]
+                )
+    install = " ".join(map(str, argvs["install the missing packages"]))
+    assert "'--'" in install and install.index("'--'") < install.index("+ baseline_apt_names")
+    dpkg = argvs["installed apt packages"]
+    assert dpkg[-2:] == ["--", "{{ item }}"]

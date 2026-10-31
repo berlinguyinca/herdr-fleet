@@ -171,3 +171,29 @@ def test_section_round_trip_and_rejection() -> None:
         BaselineFingerprint.from_json(section(packages={"git": "present"}))
     with pytest.raises(FingerprintError, match=r"baseline\.dirs"):
         BaselineFingerprint.from_json(section(dirs=["x"]))
+
+
+@pytest.mark.parametrize("name", ["openssh-server-", "x+", "-x", "a b", "vim\n", "--purge", "A"])
+def test_pins_refuse_a_package_name_the_schema_would_also_refuse(name: str) -> None:
+    from dataclasses import replace
+
+    from herdr_fleet.config import ConfigError
+
+    config = replace(load_config(CONFIG_EXAMPLE), baseline_extra_packages=(name,))
+    with pytest.raises(ConfigError, match="baseline.extra_packages"):
+        baseline_pins(config)
+
+
+def test_the_package_pattern_in_the_schema_is_the_one_the_pins_enforce() -> None:
+    import json
+    from pathlib import Path
+
+    from herdr_fleet.baseline import PACKAGE_PATTERN
+
+    schema = json.loads(
+        (Path(__file__).resolve().parent.parent / "herdr_fleet/schemas/fleet-config.schema.json")
+        .read_text()
+    )
+    assert schema["properties"]["baseline"]["properties"]["extra_packages"]["items"]["pattern"] == (
+        PACKAGE_PATTERN
+    )
