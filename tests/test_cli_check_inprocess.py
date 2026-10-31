@@ -187,3 +187,49 @@ def test_apply_that_made_changes_and_verifies_exits_zero(
     (host,) = payload["hosts"]
     assert host["status"] == "ok" and host["changed"] > 0 and payload["errors"] == []
     assert (home / ".local/bin/pi").is_file()
+
+
+# --- a lock without repo_urls for a role the config uses ---------------------------------------
+
+
+def missing_repo_urls_inputs(tmp_path: Path) -> list[str]:
+    lock = example_lock()
+    del lock["repo_urls"]
+    return [
+        "--lock",
+        str(write_yaml(tmp_path / "fleet.lock", lock)),
+        "--config",
+        str(write_yaml(tmp_path / "fleet-config.yaml", example_config())),
+    ]
+
+
+@pytest.mark.parametrize(
+    "command", [["validate"], ["plan"], ["plan", "--check"], ["apply", "--yes"]]
+)
+def test_missing_repo_urls_is_invalid_everywhere_with_a_clean_exit(
+    tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str], command: list[str]
+) -> None:
+    args = [*command, *missing_repo_urls_inputs(tmp_path), "--json"]
+    assert main(args) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["valid"] is False
+    assert any("repo_urls.herdr-engineering" in e for e in payload["errors"])
+    assert not (home / ".local").exists()
+
+
+def test_check_and_apply_catch_a_config_error_raised_after_loading(
+    tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from argparse import Namespace
+
+    from herdr_fleet.cli import _run_apply, _run_check
+    from herdr_fleet.config import load_config, load_lock
+
+    lock_path, config_path = missing_repo_urls_inputs(tmp_path)[1::2]
+    lock = load_lock(Path(lock_path))
+    config = load_config(Path(config_path))
+    args = Namespace(connection="ssh", limit=None, json=True, yes=True)
+    assert _run_check(args, lock, config) == 1
+    assert json.loads(capsys.readouterr().out)["valid"] is False
+    assert _run_apply(args, lock, config) == 1
+    assert json.loads(capsys.readouterr().out)["valid"] is False

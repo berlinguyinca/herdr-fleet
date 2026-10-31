@@ -85,7 +85,18 @@ def _load_inputs(
         loaded = load_config(config)
     except ConfigError as exc:
         errors.extend(exc.errors)
+    if loaded_lock is not None and loaded is not None:
+        errors.extend(_cross_check_errors(loaded_lock, loaded))
     return loaded_lock, loaded, errors
+
+
+def _cross_check_errors(lock: FleetLock, config: FleetConfig) -> list[str]:
+    """What the lock must say for the roles the config uses (e.g. repo_urls for a cloning role)."""
+    try:
+        fleet_pins(lock, config)
+    except ConfigError as exc:
+        return exc.errors
+    return []
 
 
 def _emit(payload: dict[str, object], text: str, as_json: bool) -> None:
@@ -148,6 +159,10 @@ def _emit_reports(
     _emit(payload, text, as_json)
 
 
+def _messages(exc: InventoryError | ConfigError) -> list[str]:
+    return exc.errors if isinstance(exc, ConfigError) else [str(exc)]
+
+
 def _prepare(
     args: argparse.Namespace, lock: FleetLock, config: FleetConfig
 ) -> tuple[dict[str, object], dict[str, object]]:
@@ -158,12 +173,11 @@ def _prepare(
 def _run_check(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -> int:
     try:
         inventory, extra_vars = _prepare(args, lock, config)
-    except InventoryError as exc:
-        return _failure([str(exc)], args.json)
+        pins = fleet_pins(lock, config)
+    except (InventoryError, ConfigError) as exc:
+        return _failure(_messages(exc), args.json)
     result = run_playbook(inventory, extra_vars, Mode.CHECK)
-    reports = build_reports(
-        parse_events(result.stdout), _host_roles(config, args.limit), fleet_pins(lock, config)
-    )
+    reports = build_reports(parse_events(result.stdout), _host_roles(config, args.limit), pins)
     errors = _runner_errors(result, reports)
     code = EXIT_ERROR if errors else check_exit_code(reports)
     verdict = {0: "no drift", 2: "drift found", 1: "errors"}[code]
@@ -222,8 +236,9 @@ def _run_apply(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -
     roles = _host_roles(config, args.limit)
     try:
         _prepare(args, lock, config)  # reject a bad --limit or jump host before touching anything
-    except InventoryError as exc:
-        return _failure([str(exc)], args.json)
+        pins = fleet_pins(lock, config)
+    except (InventoryError, ConfigError) as exc:
+        return _failure(_messages(exc), args.json)
     if not _confirmed(args, roles):
         return _failure(
             ["apply changes software on hosts; pass --yes (or answer the prompt on a TTY)"],
@@ -238,7 +253,7 @@ def _run_apply(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -
         if host_errors or report.status != "ok":
             break  # fail fast: later hosts are not touched
     untouched = {h: r for h, r in roles.items() if h not in {x.host for x in reports}}
-    reports.extend(build_reports(parse_events(""), untouched, fleet_pins(lock, config)))
+    reports.extend(build_reports(parse_events(""), untouched, pins))
     code = EXIT_ERROR if errors else apply_exit_code(reports)
     total = sum(r.changed_count for r in reports)
     verdict = "passed" if code == EXIT_OK else "FAILED"
