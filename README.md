@@ -4,7 +4,7 @@ Reproducible, updateable provisioning for a herdr-engineering fleet.
 
 **Status: slice 2.** Schemas, loader, `plan`, the `toolchain` role, `plan --check` (drift
 report) and a minimal `apply` exist. Other roles are reported as `not-implemented` and are
-skipped. See
+skipped. The design is in
 [docs/specs/0001-declarative-fleet-provisioning.md](docs/specs/0001-declarative-fleet-provisioning.md).
 
 ## Install
@@ -42,8 +42,8 @@ herdr-fleet plan --check --lock fleet.lock --config fleet-config.yaml [--json] [
 ```
 
 Runs the packaged Ansible playbook in check mode (`--check --diff`) and prints, per host and per
-role, `ok`, `drift` or `failed` with the specific differences (for example `node version:
-expected 22.23.2, actual 20.19.5`). Nothing on any host is changed. Exit codes: 0 no drift, 2
+role, `ok`, `drift`, `failed` or `not attempted` with the specific differences (for example
+`node: expected 22.23.2, found 20.19.5`). Nothing on any host is changed. Exit codes: 0 no drift, 2
 drift, 1 error (an unreachable host, a failed task, invalid input). `--limit HOST` restricts to
 one host; `--connection local` runs against the current machine instead of ssh (used by the
 container tests). For `ssh`, each host's `connection.jump_host` names another host in the file
@@ -77,9 +77,13 @@ managed bin first on `PATH` and then exec the real CLI. Changing the shell's def
 herdr-fleet apply --lock fleet.lock --config fleet-config.yaml --yes [--limit HOST] [--connection ssh|local]
 ```
 
-Applies the roles one host at a time (serial 1), then re-runs the fingerprint comparison and
-exits non-zero if anything still differs. Without `--yes` it asks for confirmation on a TTY and
-refuses otherwise.
+Applies the roles one host at a time and verifies each host (re-runs the fingerprint comparison)
+right after applying it. It stops at the first host that fails or does not verify; later hosts
+are reported as `not attempted`. Exit is non-zero if anything fails or still differs. Without
+`--yes` it lists the hosts it will converge and asks on a TTY (the prompt goes to stderr, so
+`--json` output on stdout stays valid), and refuses otherwise. `--connection local` runs the
+playbook on this machine for whichever hosts are selected, so `apply` requires `--limit HOST`
+with it.
 
 Not implemented yet (slice 4): staggering by host activity, session-awareness, rollback and
 notifications. Do not use `apply` as a fleet-wide rollout tool until they exist.

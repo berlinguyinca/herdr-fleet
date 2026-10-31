@@ -140,6 +140,8 @@ def test_apply_refuses_without_yes_when_not_a_tty(tmp_path: Path) -> None:
         "apply",
         "--connection",
         "local",
+        "--limit",
+        "host-a",
         "--lock",
         str(LOCK_EXAMPLE),
         "--config",

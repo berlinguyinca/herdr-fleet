@@ -27,7 +27,9 @@ from herdr_fleet.toolchain import toolchain_pins
 
 APPLY_LIMITS = (
     "NOT implemented yet (slice 4): staggering by host activity, session-awareness, rollback "
-    "and notifications. apply converges hosts one at a time and verifies each against fleet.lock."
+    "and notifications. apply converges one host at a time, verifies that host against "
+    "fleet.lock right after applying it, and stops at the first host that fails or does not "
+    "verify; later hosts are reported as not attempted."
 )
 
 
@@ -53,7 +55,7 @@ def _build_parser() -> argparse.ArgumentParser:
                 choices=("ssh", "local"),
                 default="ssh",
                 help="local: run every targeted host on this machine (container tests, "
-                "single-host use); only with --check or apply",
+                "single-host use); only with --check or apply, and apply then requires --limit",
             )
             cmd.add_argument("--limit", metavar="HOST", help="only this host (--check or apply)")
         if name == "plan":
@@ -171,45 +173,76 @@ def _run_check(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -
     return code
 
 
-def _confirmed(args: argparse.Namespace) -> bool:
+def _confirmed(args: argparse.Namespace, roles: dict[str, tuple[str, ...]]) -> bool:
+    """Ask on stderr (stdout may be --json) after naming every host apply will converge."""
     if args.yes:
         return True
     if not sys.stdin.isatty():
         return False
-    return input("Apply fleet.lock to the selected hosts? Type 'yes' to continue: ") == "yes"
+    listing = "\n".join(f"  {host}: {', '.join(r)}" for host, r in roles.items())
+    print(
+        f"apply will converge these hosts to fleet.lock, one at a time, and may change them:\n"
+        f"{listing}\nType 'yes' to continue: ",
+        end="",
+        file=sys.stderr,
+        flush=True,
+    )
+    return sys.stdin.readline().strip() == "yes"
+
+
+def _apply_one(
+    args: argparse.Namespace,
+    lock: FleetLock,
+    config: FleetConfig,
+    host: str,
+    roles: dict[str, tuple[str, ...]],
+) -> tuple[HostReport, list[str]]:
+    """Apply one host, then verify it right away. Returns its report and any run errors."""
+    inventory, extra_vars = _prepare(
+        argparse.Namespace(**{**vars(args), "limit": host}), lock, config
+    )
+    pins, only = toolchain_pins(lock), {host: roles[host]}
+    applied = run_playbook(inventory, extra_vars, Mode.APPLY)
+    (done,) = build_reports(parse_events(applied.stdout), only, pins, expect_fingerprint=False)
+    errors = _runner_errors(applied, [done])
+    if errors or done.status != "ok":
+        return done, errors
+    verified = run_playbook(inventory, extra_vars, Mode.VERIFY)
+    (report,) = build_reports(parse_events(verified.stdout), only, pins)
+    report = replace(report, changed_count=done.changed_count)
+    return report, _runner_errors(verified, [report])
 
 
 def _run_apply(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -> int:
-    if not _confirmed(args):
+    if args.connection == "local" and not args.limit:
+        return _failure(
+            ["--connection local runs on this machine for every host: apply needs --limit HOST"],
+            args.json,
+        )
+    roles = _host_roles(config, args.limit)
+    try:
+        _prepare(args, lock, config)  # reject a bad --limit or jump host before touching anything
+    except InventoryError as exc:
+        return _failure([str(exc)], args.json)
+    if not _confirmed(args, roles):
         return _failure(
             ["apply changes software on hosts; pass --yes (or answer the prompt on a TTY)"],
             args.json,
         )
-    try:
-        inventory, extra_vars = _prepare(args, lock, config)
-    except InventoryError as exc:
-        return _failure([str(exc)], args.json)
-    roles, pins = _host_roles(config, args.limit), toolchain_pins(lock)
-    applied = run_playbook(inventory, extra_vars, Mode.APPLY)
-    applied_reports = build_reports(
-        parse_events(applied.stdout), roles, pins, expect_fingerprint=False
-    )
-    errors = _runner_errors(applied, applied_reports)
-    if errors or any(r.status in ("failed", "not-attempted") for r in applied_reports):
-        _emit_reports(
-            "apply", applied_reports, errors, EXIT_ERROR, args.json, "apply failed; not verified"
-        )
-        return EXIT_ERROR
-    verified = run_playbook(inventory, extra_vars, Mode.VERIFY)
-    reports = build_reports(parse_events(verified.stdout), roles, pins)
-    changed = {r.host: r.changed_count for r in applied_reports}
-    reports = [replace(r, changed_count=changed[r.host]) for r in reports]
-    errors = _runner_errors(verified, reports)
+    reports: list[HostReport] = []
+    errors: list[str] = []
+    for host in roles:
+        report, host_errors = _apply_one(args, lock, config, host, roles)
+        reports.append(report)
+        errors.extend(host_errors)
+        if host_errors or report.status != "ok":
+            break  # fail fast: later hosts are not touched
+    untouched = {h: r for h, r in roles.items() if h not in {x.host for x in reports}}
+    reports.extend(build_reports(parse_events(""), untouched, toolchain_pins(lock)))
     code = EXIT_ERROR if errors else apply_exit_code(reports)
-    total = sum(changed.values())
-    note = (
-        f"apply: {total} change(s) made; verification {'passed' if code == EXIT_OK else 'FAILED'}"
-    )
+    total = sum(r.changed_count for r in reports)
+    verdict = "passed" if code == EXIT_OK else "FAILED"
+    note = f"apply: {total} change(s) made; per-host verification {verdict}"
     _emit_reports("apply", reports, errors, code, args.json, f"{note}\n{APPLY_LIMITS}")
     return code
 

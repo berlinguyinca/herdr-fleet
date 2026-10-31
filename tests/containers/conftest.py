@@ -70,7 +70,7 @@ class Fleet:
         return self.run("plan", "--check", lock=lock)
 
     def apply(self, *, lock: str = LOCK_PATH) -> Completed:
-        return self.run("apply", "--yes", lock=lock)
+        return self.run("apply", "--yes", "--limit", "host-a", lock=lock)
 
     def converge(self) -> None:
         """Ensure the pinned fixture lock is applied; cheap when it already is."""
