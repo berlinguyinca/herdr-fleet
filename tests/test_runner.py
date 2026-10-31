@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from herdr_fleet.cli import main
 from herdr_fleet.runner import EXIT_COMMAND_NOT_RUNNABLE, Mode, run_playbook
-from tests.helpers import example_config, example_lock, write_yaml
 
 
 def test_missing_executable_is_rc_127(tmp_path: Path) -> None:
