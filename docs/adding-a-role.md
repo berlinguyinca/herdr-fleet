@@ -41,7 +41,7 @@ script or timer (spec 0001, "Extending the fleet").
 Lessons from the toolchain role: pin and verify downloads (`get_url` with `checksum:
 sha256:...` never extracts an unverified file); extract to a `.partial` directory and rename;
 give the user a stable entry point (shim) rather than relying on the shell's PATH; and
-fingerprint the user-visible outcome (`command -v` in a non-interactive shell), not just the
+fingerprint the user-visible outcome (`command -v` in a clean-environment bash login shell), not just the
 installed files.
 
 Run `scripts/ci.sh` before opening a PR.

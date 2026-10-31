@@ -11,8 +11,9 @@
     path: "{{ toolchain_shim_dir }}/{{ cli.command }}"
   register: fp_shim
 
-# A non-interactive login shell with a clean environment: what a service or a job would see.
-- name: where a non-interactive shell finds {{ cli.command }}
+# A bash login shell (bash -l, no TTY) with a clean environment: what a service or a job would
+# see. Profile scripts may print anything, so the answer is the RESOLVED= marker line only.
+- name: where a bash login shell finds {{ cli.command }}
   ansible.builtin.command:
     argv:
       - env
@@ -21,11 +22,17 @@
       - PATH=/usr/local/bin:/usr/bin:/bin
       - bash
       - -lc
-      - "command -v {{ cli.command }}"
+      - "printf 'RESOLVED=%s\\n' \"$(command -v {{ cli.command | quote }})\""
   register: fp_resolved
   failed_when: false
   changed_when: false
   check_mode: false
+
+- name: read the marker line for {{ cli.command }}
+  ansible.builtin.set_fact:
+    fp_resolved_path: >-
+      {{ (fp_resolved.stdout_lines | default([]) | select('match', '^RESOLVED=') | list | last
+      | default('RESOLVED=')) | regex_replace('^RESOLVED=', '') | trim }}
 
 - name: add {{ cli.name }}
   ansible.builtin.set_fact:
@@ -34,4 +41,4 @@
       'version': ((fp_pkg.content | b64decode | from_json).version if fp_pkg.content is defined else None),
       'shim_path': toolchain_shim_dir ~ '/' ~ cli.command,
       'shim_present': fp_shim.stat.exists,
-      'resolved_path': (fp_resolved.stdout | trim if fp_resolved.rc == 0 else None)}}) }}
+      'resolved_path': (fp_resolved_path if fp_resolved_path | length > 0 else None)}}) }}

@@ -49,7 +49,9 @@ one host; `--connection local` runs against the current machine instead of ssh (
 container tests; the jump host and ssh options from the config are used for `ssh`).
 
 Each host also reports a fingerprint (os/arch, managed Node version, CLI versions, shim path,
-what `command -v pi` resolves to in a non-interactive shell, and whether that is the shim).
+what `command -v pi` resolves to in a clean-environment bash login shell (`bash -lc`, no TTY;
+only a marker line of its output is read, so profile banners cannot cause drift), and whether
+that is the shim).
 
 ### Toolchain role
 
