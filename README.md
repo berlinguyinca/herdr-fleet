@@ -46,7 +46,11 @@ role, `ok`, `drift` or `failed` with the specific differences (for example `node
 expected 22.23.2, actual 20.19.5`). Nothing on any host is changed. Exit codes: 0 no drift, 2
 drift, 1 error (an unreachable host, a failed task, invalid input). `--limit HOST` restricts to
 one host; `--connection local` runs against the current machine instead of ssh (used by the
-container tests; the jump host and ssh options from the config are used for `ssh`).
+container tests). For `ssh`, each host's `connection.jump_host` names another host in the file
+and becomes `ssh -J user@address`. Only one hop is supported: a jump host that itself has a
+`jump_host` is rejected. `address` must be a hostname, IPv4 or bracketed IPv6 address and `user`
+must match `^[a-z_][a-z0-9._-]*$` (nothing starting with `-`), because both end up on an ssh
+command line.
 
 Each host also reports a fingerprint (os/arch, managed Node version, CLI versions, shim path,
 what `command -v pi` resolves to in a clean-environment bash login shell (`bash -lc`, no TTY;

@@ -133,7 +133,14 @@ def _cross_check_errors(path: Path, config: FleetConfig) -> list[str]:
     has_server = config.ci_external_url is not None or any(
         "ci-server" in h.roles for h in config.hosts
     )
+    by_name = {h.name: h for h in config.hosts}
     for host in config.hosts:
+        jump = by_name.get(host.jump_host) if host.jump_host else None
+        if jump is not None and jump.jump_host is not None:
+            errors.append(
+                f"{path}: hosts.{host.name}.connection.jump_host: '{jump.name}' itself has a "
+                "jump_host; chained jump hosts are not supported (use one hop)"
+            )
         if "ci-agent" in host.roles and not has_server:
             errors.append(
                 f"{path}: hosts.{host.name}.roles: role 'ci-agent' needs a CI server; give a "
