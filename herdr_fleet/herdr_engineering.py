@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from herdr_fleet import sections
 from herdr_fleet.config import FleetConfig, FleetLock
-from herdr_fleet.fingerprint import Difference, Fingerprint
+from herdr_fleet.fingerprint import Difference, Fingerprint, FingerprintError
 from herdr_fleet.repos import repo_url
 
 ROLE = "herdr-engineering"
@@ -35,6 +35,22 @@ def herdr_engineering_pins(
     )
 
 
+SERVICE_STATES: tuple[str, ...] = ("active", "inactive", "unmanaged")
+ENV_MODE = "0600"
+FABRIC_URL_KEY = "HERDR_ENGINEERING_FABRIC_URL"
+CONTROL_PLANE_URL_KEY = "HERDR_ENGINEERING_CONTROL_PLANE_URL"
+
+
+def _service_state(raw: sections.Section) -> str:
+    state = sections.text(SECTION, raw, "fabric_service")
+    if state not in SERVICE_STATES:
+        raise FingerprintError(
+            f"fingerprint: {SECTION}.fabric_service: expected one of {', '.join(SERVICE_STATES)}, "
+            f"got {state!r}"
+        )
+    return state
+
+
 @dataclass(frozen=True)
 class HerdrEngineeringFingerprint:
     revision: str | None  # the stage helper's attestation; None when invalid or absent
@@ -43,6 +59,14 @@ class HerdrEngineeringFingerprint:
     venv_entry_present: bool
     shim_path: str
     resolved_path: str | None
+    fabric_env_url: str | None
+    fabric_env_control_plane_url: str | None
+    fabric_env_mode: str | None
+    fabric_unit_present: bool
+    fabric_unit_matches_release: bool
+    fabric_service: str  # "active" | "inactive" | "unmanaged"
+    build_gate_sha256: str | None
+    build_gate_release_sha256: str | None
 
     @classmethod
     def from_json(cls, raw: sections.Section) -> HerdrEngineeringFingerprint:
@@ -53,11 +77,30 @@ class HerdrEngineeringFingerprint:
             venv_entry_present=sections.flag(SECTION, raw, "venv_entry_present"),
             shim_path=sections.text(SECTION, raw, "shim_path"),
             resolved_path=sections.optional_text(SECTION, raw, "resolved_path"),
+            fabric_env_url=sections.optional_text(SECTION, raw, "fabric_env_url"),
+            fabric_env_control_plane_url=sections.optional_text(
+                SECTION, raw, "fabric_env_control_plane_url"
+            ),
+            fabric_env_mode=sections.optional_text(SECTION, raw, "fabric_env_mode"),
+            fabric_unit_present=sections.flag(SECTION, raw, "fabric_unit_present"),
+            fabric_unit_matches_release=sections.flag(SECTION, raw, "fabric_unit_matches_release"),
+            fabric_service=_service_state(raw),
+            build_gate_sha256=sections.optional_text(SECTION, raw, "build_gate_sha256"),
+            build_gate_release_sha256=sections.optional_text(
+                SECTION, raw, "build_gate_release_sha256"
+            ),
         )
 
     @property
     def shim_resolves(self) -> bool:
         return self.resolved_path == self.shim_path
+
+    @property
+    def build_gate_matches_release(self) -> bool:
+        return (
+            self.build_gate_sha256 is not None
+            and self.build_gate_sha256 == self.build_gate_release_sha256
+        )
 
 
 def compare_herdr_engineering(fp: Fingerprint, pins: HerdrEngineeringPins) -> list[Difference]:
@@ -77,4 +120,37 @@ def compare_herdr_engineering(fp: Fingerprint, pins: HerdrEngineeringPins) -> li
         differences.append(
             Difference("path herdr-eng", found.shim_path, found.resolved_path or "not found")
         )
+    differences.extend(_fabric_env_differences(found, pins))
+    short = pins.revision[:12]
+    if not found.fabric_unit_matches_release:
+        state = "differs" if found.fabric_unit_present else "missing"
+        differences.append(Difference("fabric agent unit", f"rendered from release {short}", state))
+    if found.fabric_service == "inactive":
+        differences.append(Difference("fabric agent", "active", "inactive"))
+    if not found.build_gate_matches_release:
+        differences.append(
+            Difference(
+                "build-gate", f"sha256 of release {short}", found.build_gate_sha256 or "missing"
+            )
+        )
     return differences
+
+
+def _env_line(key: str, value: str | None) -> str:
+    return "missing" if value is None else f"{key}={value}"
+
+
+def _fabric_env_differences(
+    found: HerdrEngineeringFingerprint, pins: HerdrEngineeringPins
+) -> list[Difference]:
+    out: list[Difference] = []
+    expected = (
+        (FABRIC_URL_KEY, pins.gateway_url, found.fabric_env_url),
+        (CONTROL_PLANE_URL_KEY, pins.control_plane_url, found.fabric_env_control_plane_url),
+    )
+    for key, want, have in expected:
+        if want is not None and have != want:
+            out.append(Difference("fabric.env", f"{key}={want}", _env_line(key, have)))
+    if found.fabric_env_mode is not None and found.fabric_env_mode != ENV_MODE:
+        out.append(Difference("fabric.env mode", ENV_MODE, found.fabric_env_mode))
+    return out

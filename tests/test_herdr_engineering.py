@@ -161,3 +161,74 @@ def test_extra_vars_carry_the_pins_and_the_packaged_helper() -> None:
     assert extra["herdr_engineering_control_plane_url"] == "https://control-plane.example.com"
     assert Path(str(extra["fleet_stage_release_src"])).name == "stage_release.py"
     assert Path(str(extra["fleet_stage_release_src"])).is_file()
+
+
+def only(pins: HerdrEngineeringPins, **over: object) -> list[str]:
+    return [d.message for d in compare_herdr_engineering(fingerprint(section(**over)), pins)]
+
+
+def test_a_missing_or_wrong_fabric_url_is_named(pins: HerdrEngineeringPins) -> None:
+    assert only(pins, fabric_env_url=None) == [
+        f"fabric.env: expected HERDR_ENGINEERING_FABRIC_URL={GATEWAY}, found missing"
+    ]
+    assert only(pins, fabric_env_url="https://x.example.com") == [
+        f"fabric.env: expected HERDR_ENGINEERING_FABRIC_URL={GATEWAY}, found "
+        "HERDR_ENGINEERING_FABRIC_URL=https://x.example.com"
+    ]
+
+
+def test_the_control_plane_line_is_only_checked_when_configured(
+    pins: HerdrEngineeringPins,
+) -> None:
+    assert only(pins, fabric_env_control_plane_url="https://other.example.com") == []
+    configured = HerdrEngineeringPins(SHA, pins.repository, GATEWAY, "https://control.example.com")
+    assert only(configured) == [
+        "fabric.env: expected HERDR_ENGINEERING_CONTROL_PLANE_URL=https://control.example.com, "
+        "found missing"
+    ]
+
+
+def test_a_loose_fabric_env_mode_is_named(pins: HerdrEngineeringPins) -> None:
+    assert only(pins, fabric_env_mode="0644") == ["fabric.env mode: expected 0600, found 0644"]
+    assert only(pins, fabric_env_mode=None, fabric_env_url=None) == [
+        f"fabric.env: expected HERDR_ENGINEERING_FABRIC_URL={GATEWAY}, found missing"
+    ]
+
+
+def test_unit_states_are_missing_or_differs(pins: HerdrEngineeringPins) -> None:
+    prefix = f"fabric agent unit: expected rendered from release {SHORT}, found "
+    assert only(pins, fabric_unit_present=False, fabric_unit_matches_release=False) == [
+        prefix + "missing"
+    ]
+    assert only(pins, fabric_unit_matches_release=False) == [prefix + "differs"]
+
+
+def test_service_state_is_drift_only_when_managed(pins: HerdrEngineeringPins) -> None:
+    assert only(pins, fabric_service="inactive") == [
+        "fabric agent: expected active, found inactive"
+    ]
+    assert only(pins, fabric_service="active") == []
+    assert only(pins, fabric_service="unmanaged") == []
+
+
+def test_build_gate_differences_name_the_release(pins: HerdrEngineeringPins) -> None:
+    prefix = f"build-gate: expected sha256 of release {SHORT}, found "
+    assert only(pins, build_gate_sha256=None) == [prefix + "missing"]
+    assert only(pins, build_gate_sha256="d" * 64) == [prefix + "d" * 64]
+    assert only(pins, build_gate_sha256=None, build_gate_release_sha256=None) == [
+        prefix + "missing"
+    ]
+
+
+def test_an_unknown_service_state_is_rejected() -> None:
+    with pytest.raises(FingerprintError, match=r"herdr_engineering\.fabric_service"):
+        HerdrEngineeringFingerprint.from_json(section(fabric_service="running"))
+
+
+def test_new_section_fields_round_trip() -> None:
+    parsed = HerdrEngineeringFingerprint.from_json(section(fabric_service="active"))
+    assert parsed.fabric_service == "active" and parsed.fabric_env_mode == "0600"
+    assert parsed.build_gate_matches_release
+    assert not HerdrEngineeringFingerprint.from_json(
+        section(build_gate_sha256="d" * 64)
+    ).build_gate_matches_release

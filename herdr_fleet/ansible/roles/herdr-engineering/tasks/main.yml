@@ -4,8 +4,15 @@
     that:
       - herdr_engineering_revision is defined
       - herdr_engineering_repository is defined
+      - herdr_engineering_gateway_url is defined
       - fleet_stage_release_src is defined
     fail_msg: herdr_engineering_* variables come from fleet.lock via herdr-fleet; do not run this role by hand
+    quiet: true
+
+- name: require the fabric URL from the config
+  ansible.builtin.assert:
+    that: herdr_engineering_gateway_url is not none and herdr_engineering_gateway_url | length > 0
+    fail_msg: herdr-engineering writes the fabric URL to fabric.env; set services.gateway.url in fleet-config.yaml
     quiet: true
 
 - name: probe the interpreter that builds the venv
@@ -117,3 +124,19 @@
     dest: "{{ herdr_engineering_shim }}"
     state: link
   when: herdr_engineering_entry_stat.stat.exists
+
+# Everything below needs the release on disk, so on a fresh host check mode reports the pending
+# stage above and nothing else.
+- name: staged release directory
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_unit_template | dirname | dirname }}"
+  register: herdr_engineering_release_stat
+  check_mode: false
+
+- name: fabric.env, agent unit and service
+  ansible.builtin.include_tasks: fabric.yml
+  when: herdr_engineering_release_stat.stat.exists
+
+- name: Pi build gate
+  ansible.builtin.include_tasks: build_gate.yml
+  when: herdr_engineering_release_stat.stat.exists

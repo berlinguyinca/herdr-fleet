@@ -17,3 +17,22 @@ herdr_engineering_shim: "{{ herdr_engineering_bin_dir }}/herdr-eng"
 # Supplied from fleet.lock and fleet-config.yaml by herdr-fleet (extra-vars), never defaulted here:
 #   herdr_engineering_revision, herdr_engineering_repository, herdr_engineering_gateway_url,
 #   herdr_engineering_control_plane_url (null when not configured), fleet_stage_release_src
+
+# Fabric agent. The user systemd manager is looked for under this runtime directory only; when it
+# is absent (containers, a host without a user manager) the unit file is still rendered but
+# nothing is enabled or started and the fingerprint says "unmanaged". The directory is a variable
+# so tests can point at one with no manager and never reach the machine's own systemd.
+herdr_engineering_runtime_dir: "/run/user/{{ ansible_facts.user_uid }}"
+herdr_engineering_systemd_env:
+  XDG_RUNTIME_DIR: "{{ herdr_engineering_runtime_dir }}"
+  DBUS_SESSION_BUS_ADDRESS: "unix:path={{ herdr_engineering_runtime_dir }}/bus"
+herdr_engineering_release: "{{ herdr_engineering_root }}/releases/{{ herdr_engineering_revision }}"
+herdr_engineering_config_dir: "{{ herdr_engineering_home }}/.config/herdr-engineering"
+herdr_engineering_env_file: "{{ herdr_engineering_config_dir }}/fabric.env"
+herdr_engineering_unit_name: herdr-eng-fabric-agent.service
+herdr_engineering_unit_dir: "{{ herdr_engineering_home }}/.config/systemd/user"
+herdr_engineering_unit: "{{ herdr_engineering_unit_dir }}/{{ herdr_engineering_unit_name }}"
+herdr_engineering_unit_template: "{{ herdr_engineering_release }}/scripts/herdr-eng-fabric-agent.service"
+herdr_engineering_unit_placeholder: __HERDR_ENG__
+herdr_engineering_gate_source: "{{ herdr_engineering_release }}/deploy/pi-build-gate/build-gate.ts"
+herdr_engineering_gate: "{{ herdr_engineering_home }}/.pi/agent/extensions/build-gate.ts"

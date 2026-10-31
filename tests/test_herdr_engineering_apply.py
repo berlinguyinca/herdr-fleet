@@ -6,6 +6,8 @@ The release comes from a real git repository at a ``file://`` URL; ``venv`` and 
 
 from __future__ import annotations
 
+import hashlib
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -20,7 +22,7 @@ from herdr_fleet.herdr_engineering import (
 )
 from herdr_fleet.report import ParsedEvents, parse_events
 from herdr_fleet.runner import Mode, run_playbook
-from tests.eng_repo import Source, make_source
+from tests.eng_repo import BUILD_GATE, UNIT, Source, make_source
 from tests.helpers import example_extra_vars
 
 GATEWAY = "https://gateway.example.com"
@@ -235,3 +237,208 @@ def test_no_role_uses_privilege_escalation_except_baseline() -> None:
         if p.relative_to(roles).parts[0] != "baseline" and "become" in p.read_text()
     ]
     assert offenders == []
+
+
+# --- part B: fabric.env, agent unit, build gate ----------------------------------------------
+
+
+def env_file(home: Path) -> Path:
+    return home / ".config/herdr-engineering/fabric.env"
+
+
+def unit_file(home: Path) -> Path:
+    return home / ".config/systemd/user/herdr-eng-fabric-agent.service"
+
+
+def gate_file(home: Path) -> Path:
+    return home / ".pi/agent/extensions/build-gate.ts"
+
+
+def section_of(fp: Fingerprint) -> HerdrEngineeringFingerprint:
+    return HerdrEngineeringFingerprint.from_json(fp.sections["herdr_engineering"])
+
+
+def messages(fp: Fingerprint, source: Source, **over: object) -> list[str]:
+    pins = pins_for(source)
+    pins = HerdrEngineeringPins(**{**pins.__dict__, **over})
+    return [d.message for d in compare_herdr_engineering(fp, pins)]
+
+
+def test_fabric_env_is_written_0600_and_other_lines_survive(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_file(tmp_path).parent.mkdir(parents=True)
+    env_file(tmp_path).write_text(
+        "OTHER=kept\nHERDR_ENGINEERING_FABRIC_URL=https://old.example.com\n"
+    )
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    text = env_file(tmp_path).read_text()
+    assert f"HERDR_ENGINEERING_FABRIC_URL={GATEWAY}\n" in text
+    assert "OTHER=kept\n" in text and "old.example.com" not in text
+    assert stat.S_IMODE(env_file(tmp_path).stat().st_mode) == 0o600
+    assert "HERDR_ENGINEERING_CONTROL_PLANE_URL" not in text  # never invented
+
+
+def test_control_plane_line_is_written_only_when_configured(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(
+        tmp_path,
+        source,
+        Mode.APPLY,
+        monkeypatch,
+        herdr_engineering_control_plane_url="https://control.example.com",
+    )
+    assert "HERDR_ENGINEERING_CONTROL_PLANE_URL=https://control.example.com\n" in (
+        env_file(tmp_path).read_text()
+    )
+
+
+def test_unit_is_the_release_template_with_the_placeholder_replaced(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    entry = tmp_path / ".venvs/herdr-engineering/bin/herdr-eng"
+    assert unit_file(tmp_path).read_text() == UNIT.replace("__HERDR_ENG__", str(entry))
+    assert "__HERDR_ENG__" not in unit_file(tmp_path).read_text()
+
+
+def test_build_gate_is_copied_from_the_release_0644(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    assert gate_file(tmp_path).read_text() == BUILD_GATE
+    assert stat.S_IMODE(gate_file(tmp_path).stat().st_mode) == 0o644
+
+
+def test_without_a_user_systemd_the_service_is_unmanaged_and_verify_is_clean(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    fp = verify(tmp_path, source, monkeypatch)
+    found = section_of(fp)
+    assert found.fabric_service == "unmanaged"
+    assert found.fabric_env_url == GATEWAY and found.fabric_unit_matches_release
+    assert found.build_gate_sha256 == hashlib.sha256(BUILD_GATE.encode()).hexdigest()
+    assert messages(fp, source) == []
+
+
+def test_second_apply_still_changes_nothing(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    assert changed(converge(tmp_path, source, Mode.APPLY, monkeypatch)) == []
+
+
+def test_check_mode_after_apply_has_nothing_pending_for_the_new_files(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    assert changed(converge(tmp_path, source, Mode.CHECK, monkeypatch)) == []
+
+
+def test_check_mode_on_a_fresh_home_writes_none_of_the_files(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.CHECK, monkeypatch)
+    assert not unit_file(tmp_path).exists() and not gate_file(tmp_path).exists()
+    assert not env_file(tmp_path).exists()
+
+
+def test_a_wrong_fabric_url_is_named_and_apply_repairs_it(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    env_file(tmp_path).write_text("HERDR_ENGINEERING_FABRIC_URL=https://elsewhere.example.com\n")
+    found = messages(verify(tmp_path, source, monkeypatch), source)
+    assert (
+        f"fabric.env: expected HERDR_ENGINEERING_FABRIC_URL={GATEWAY}, found "
+        "HERDR_ENGINEERING_FABRIC_URL=https://elsewhere.example.com" in found
+    )
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    assert messages(verify(tmp_path, source, monkeypatch), source) == []
+
+
+def test_a_missing_fabric_env_is_named(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    env_file(tmp_path).unlink()
+    found = messages(verify(tmp_path, source, monkeypatch), source)
+    assert f"fabric.env: expected HERDR_ENGINEERING_FABRIC_URL={GATEWAY}, found missing" in found
+
+
+def test_a_loosened_fabric_env_mode_is_named(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    env_file(tmp_path).chmod(0o644)
+    found = messages(verify(tmp_path, source, monkeypatch), source)
+    assert "fabric.env mode: expected 0600, found 0644" in found
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    assert stat.S_IMODE(env_file(tmp_path).stat().st_mode) == 0o600
+
+
+def test_edited_and_deleted_units_are_named_differently(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    short = source.revision[:12]
+    unit_file(tmp_path).write_text("[Service]\nExecStart=/bin/true\n")
+    edited = messages(verify(tmp_path, source, monkeypatch), source)
+    assert f"fabric agent unit: expected rendered from release {short}, found differs" in edited
+    unit_file(tmp_path).unlink()
+    gone = messages(verify(tmp_path, source, monkeypatch), source)
+    assert f"fabric agent unit: expected rendered from release {short}, found missing" in gone
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    assert messages(verify(tmp_path, source, monkeypatch), source) == []
+
+
+def test_a_modified_build_gate_is_named_by_sha256(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    gate_file(tmp_path).write_text("tampered\n")
+    digest = hashlib.sha256(b"tampered\n").hexdigest()
+    found = messages(verify(tmp_path, source, monkeypatch), source)
+    assert f"build-gate: expected sha256 of release {source.revision[:12]}, found {digest}" in found
+    gate_file(tmp_path).unlink()
+    gone = messages(verify(tmp_path, source, monkeypatch), source)
+    assert f"build-gate: expected sha256 of release {source.revision[:12]}, found missing" in gone
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    assert gate_file(tmp_path).read_text() == BUILD_GATE
+
+
+def test_a_new_pin_rewrites_the_build_gate_and_unit_from_the_new_release(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    newer = source.commit({"deploy/pi-build-gate/build-gate.ts": "// gate v2\n"})
+    converge(tmp_path, newer, Mode.APPLY, monkeypatch)
+    assert gate_file(tmp_path).read_text() == "// gate v2\n"
+    assert messages(verify(tmp_path, newer, monkeypatch), newer) == []
+
+
+def test_the_rendered_unit_is_accepted_by_systemd_analyze(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    assert unit_file(tmp_path).is_file()
+    # Parsing only: systemd-analyze reads the file, it starts and enables nothing.
+    done = subprocess.run(
+        ["systemd-analyze", "--user", "verify", str(unit_file(tmp_path))],
+        capture_output=True,
+        text=True,
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+    )
+    assert "Unknown key" not in done.stderr and "Unknown section" not in done.stderr
+    assert "Failed to parse" not in done.stderr
+
+
+def test_a_missing_gateway_url_fails_naming_the_remedy(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = run_playbook(LOCAL, variables(source, herdr_engineering_gateway_url=None), Mode.APPLY)
+    assert result.returncode != 0
+    assert "services.gateway.url" in result.stdout

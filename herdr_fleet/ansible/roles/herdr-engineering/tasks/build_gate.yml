@@ -1,0 +1,21 @@
+---
+# The release's Pi build-gate extension, copied as-is. Pi loads it from this fixed path.
+- name: build gate source in the release
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_gate_source }}"
+  register: herdr_engineering_gate_source_stat
+  check_mode: false
+
+- name: Pi extensions directory
+  ansible.builtin.file:
+    path: "{{ herdr_engineering_gate | dirname }}"
+    state: directory
+  when: herdr_engineering_gate_source_stat.stat.exists
+
+- name: install the build gate
+  ansible.builtin.copy:
+    src: "{{ herdr_engineering_gate_source }}"
+    dest: "{{ herdr_engineering_gate }}"
+    remote_src: true
+    mode: "0644"
+  when: herdr_engineering_gate_source_stat.stat.exists

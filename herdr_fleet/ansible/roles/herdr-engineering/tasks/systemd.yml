@@ -1,0 +1,16 @@
+---
+# Read-only: is there a user systemd manager to talk to?
+- name: user systemd manager
+  ansible.builtin.command:
+    argv: [systemctl, --user, show-environment]
+  environment: "{{ herdr_engineering_systemd_env }}"
+  register: herdr_engineering_systemd_probe
+  when: ansible_facts.system == 'Linux'
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: record whether the user systemd manager is reachable
+  ansible.builtin.set_fact:
+    herdr_engineering_systemd_user: >-
+      {{ ansible_facts.system == 'Linux' and (herdr_engineering_systemd_probe.rc | default(1)) == 0 }}
