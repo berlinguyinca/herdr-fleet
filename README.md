@@ -52,6 +52,10 @@ and becomes `ssh -J user@address`. Only one hop is supported: a jump host that i
 must match `^[a-z_][a-z0-9._-]*$` (nothing starting with `-`), because both end up on an ssh
 command line.
 
+`plan --check` never touches the network: when Node is absent it reports the install as a
+pending change without downloading the archive, so a wrong `sha256` in `fleet.lock` or an
+unreachable mirror only surfaces on `apply` (the download is checksum-verified there).
+
 Each host also reports a fingerprint (os/arch, managed Node version, CLI versions, shim path,
 what `command -v pi` resolves to in a clean-environment bash login shell (`bash -lc`, no TTY;
 only a marker line of its output is read, so profile banners cannot cause drift), and whether

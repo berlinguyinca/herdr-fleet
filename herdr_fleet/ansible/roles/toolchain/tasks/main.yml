@@ -58,13 +58,16 @@
   when: toolchain_can_run and not toolchain_node_stat.stat.exists
   block:
     # get_url verifies the lock's sha256 and refuses (and removes the download) on a mismatch,
-    # so nothing below ever sees an unverified archive.
+    # so nothing below ever sees an unverified archive. Check mode never touches the network, so a
+    # wrong checksum or an unreachable mirror only surfaces on apply; "move node ... into place"
+    # below is what reports the pending install.
     - name: download node {{ toolchain_node_version }} and verify its sha256
       ansible.builtin.get_url:
         url: "{{ toolchain_node_dist_url }}/v{{ toolchain_node_version }}/{{ toolchain_node_archive }}"
         dest: "{{ toolchain_cache_dir }}/{{ toolchain_node_archive }}"
         checksum: "sha256:{{ toolchain_node_sha256[toolchain_platform] }}"
         mode: "0644"
+      when: not ansible_check_mode
 
     - name: clear any half-extracted staging directory
       ansible.builtin.file:

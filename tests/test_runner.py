@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -70,3 +73,59 @@ def test_apply_pass_stops_before_the_next_host(
     result = run_playbook(_mixed_inventory(broken), extra, Mode.APPLY)
     assert _hosts_seen(result.stdout) == {"a-bad"}
     assert not (tmp_path / ".local").exists()
+
+
+class _CountingHandler(BaseHTTPRequestHandler):
+    requests: ClassVar[list[str]] = []
+
+    def do_GET(self) -> None:
+        self.requests.append(self.path)
+        self.send_response(404)
+        self.end_headers()
+
+    do_HEAD = do_GET
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        pass
+
+
+def test_check_mode_does_not_download_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """plan --check is read-only: with Node absent it reports a pending change, no network."""
+    _CountingHandler.requests = []
+    server = HTTPServer(("127.0.0.1", 0), _CountingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        extra = build_extra_vars(load_lock(LOCK_EXAMPLE))
+        extra["toolchain_node_dist_url"] = f"http://127.0.0.1:{server.server_port}"
+        # directories must already exist, or the download step is not reached in check mode
+        prefix = tmp_path / ".local" / "share" / "herdr-fleet" / "toolchain"
+        for sub in ("node", "bin", "cache"):
+            (prefix / sub).mkdir(parents=True)
+        (tmp_path / ".local" / "bin").mkdir(parents=True, exist_ok=True)
+        result = run_playbook(_local_inventory(), extra, Mode.CHECK)
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert _CountingHandler.requests == []
+    lines = [json.loads(ln) for ln in result.stdout.splitlines() if ln.startswith("{")]
+    events = [e for e in lines if e["event"] == "task"]
+    assert not [e for e in events if e["status"] == "failed"], events
+    pending = [e["task"] for e in events if e["status"] in ("changed", "would_change")]
+    assert any("move node" in task for task in pending), pending
+    assert list((prefix / "cache").iterdir()) == []
+
+
+def _local_inventory() -> dict[str, object]:
+    return {
+        "all": {
+            "hosts": {
+                "h": {
+                    "ansible_connection": "local",
+                    "ansible_python_interpreter": "auto_silent",
+                    "fleet_roles": ["toolchain"],
+                }
+            }
+        }
+    }
