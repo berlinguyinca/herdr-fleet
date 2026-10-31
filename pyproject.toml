@@ -31,4 +31,8 @@ herdr_fleet = ["schemas/*.json", "ansible/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--import-mode=importlib --cov=herdr_fleet --cov-branch --cov-report=term-missing --cov-fail-under=80"
+markers = [
+    "container: runs herdr-fleet inside a Docker or Apptainer container",
+    "network: downloads real Node/npm artifacts",
+]
+addopts = "--import-mode=importlib --cov=herdr_fleet --cov-branch --cov-report=term-missing --cov-fail-under=80 -m 'not container'"
