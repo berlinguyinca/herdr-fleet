@@ -60,7 +60,16 @@ def _environment(root: Path) -> dict[str, str]:
     return env
 
 
-def run_playbook(inventory: JsonObject, extra_vars: JsonObject, mode: Mode) -> RunResult:
+EXIT_COMMAND_NOT_RUNNABLE = 127
+
+
+def run_playbook(
+    inventory: JsonObject,
+    extra_vars: JsonObject,
+    mode: Mode,
+    *,
+    executable: Path | None = None,
+) -> RunResult:
     root = ansible_dir()
     with tempfile.TemporaryDirectory(prefix="herdr-fleet-") as tmp:
         inventory_file = Path(tmp) / "inventory.yml"
@@ -68,7 +77,7 @@ def run_playbook(inventory: JsonObject, extra_vars: JsonObject, mode: Mode) -> R
         inventory_file.write_text(yaml.safe_dump(inventory))
         vars_file.write_text(json.dumps(extra_vars))
         command = [
-            str(ansible_playbook_executable()),
+            str(executable or ansible_playbook_executable()),
             "-i",
             str(inventory_file),
             "-e",
@@ -76,7 +85,13 @@ def run_playbook(inventory: JsonObject, extra_vars: JsonObject, mode: Mode) -> R
             *_mode_args(mode),
             str(root / "playbooks" / "converge.yml"),
         ]
-        done = subprocess.run(
-            command, capture_output=True, text=True, check=False, env=_environment(root)
-        )
+        try:
+            done = subprocess.run(
+                command, capture_output=True, text=True, check=False, env=_environment(root)
+            )
+        except OSError as exc:
+            reason = exc.strerror or type(exc).__name__
+            return RunResult(
+                EXIT_COMMAND_NOT_RUNNABLE, "", f"cannot run {command[0]}: {reason}"
+            )
     return RunResult(done.returncode, done.stdout, done.stderr)
