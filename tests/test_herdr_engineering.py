@@ -83,7 +83,7 @@ def test_a_lock_without_repo_urls_still_loads_when_no_host_needs_the_repository(
     hosts = config["hosts"]
     assert isinstance(hosts, dict)
     for body in hosts.values():
-        body["roles"] = [r for r in body["roles"] if r != "herdr-engineering"]
+        body["roles"] = [r for r in body["roles"] if r not in ("herdr-engineering", "pi-runtime")]
     cfg = load_config(write_yaml(tmp_path / "c.yaml", config))
     bundle = fleet_pins(load_lock(write_yaml(tmp_path / "l.yaml", lock)), cfg)
     assert bundle.herdr_engineering.repository is None

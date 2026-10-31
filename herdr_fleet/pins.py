@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from herdr_fleet.baseline import BaselinePins, baseline_pins
 from herdr_fleet.config import FleetConfig, FleetLock
 from herdr_fleet.herdr import HerdrPins, herdr_pins
 from herdr_fleet.herdr_engineering import (
@@ -25,6 +26,7 @@ from herdr_fleet.toolchain import ToolchainPins, toolchain_pins
 
 @dataclass(frozen=True)
 class FleetPins:
+    baseline: BaselinePins
     toolchain: ToolchainPins
     herdr: HerdrPins
     herdr_engineering: HerdrEngineeringPins
@@ -38,6 +40,7 @@ def _on_a_host(config: FleetConfig, role: str) -> bool:
 def fleet_pins(lock: FleetLock, config: FleetConfig) -> FleetPins:
     needed = _on_a_host(config, HERDR_ENGINEERING_ROLE)
     return FleetPins(
+        baseline=baseline_pins(config),
         toolchain=toolchain_pins(lock),
         herdr=herdr_pins(lock),
         herdr_engineering=herdr_engineering_pins(lock, config, required=needed),

@@ -1,0 +1,14 @@
+---
+# The only role that may escalate privileges, and only for two things: installing apt packages
+# and enabling linger. Every other task, including every probe, runs as the connecting user.
+#
+# Supplied from fleet.lock and fleet-config.yaml by herdr-fleet (extra-vars), never defaulted:
+#   baseline_packages, baseline_macos_commands, baseline_dirs
+baseline_home: "{{ ansible_facts.env.HOME }}"
+baseline_user: "{{ ansible_facts.user_id }}"
+# Tailscale is informational only: reported, never installed, never drift.
+baseline_tailscale: tailscale
+# The program used to learn whether privileged commands can run without a password.
+baseline_sudo: sudo
+# Linger keeps the operator's user services running after logout; herdr-engineering needs it.
+baseline_manage_linger: "{{ 'herdr-engineering' in fleet_roles }}"

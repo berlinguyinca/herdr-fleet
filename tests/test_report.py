@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from herdr_fleet.baseline import DIRS, MACOS_COMMANDS, REQUIRED_PACKAGES, BaselinePins
 from herdr_fleet.config import load_lock
 from herdr_fleet.fingerprint import Difference, Fingerprint
 from herdr_fleet.herdr import herdr_pins
@@ -34,6 +35,7 @@ from tests.helpers import LOCK_EXAMPLE
 
 def fleet_pins_of(pins: ToolchainPins) -> FleetPins:
     return FleetPins(
+        baseline=BaselinePins(REQUIRED_PACKAGES, MACOS_COMMANDS, DIRS),
         toolchain=pins,
         herdr=herdr_pins(load_lock(LOCK_EXAMPLE)),
         herdr_engineering=HerdrEngineeringPins(
@@ -43,7 +45,7 @@ def fleet_pins_of(pins: ToolchainPins) -> FleetPins:
     )
 
 
-HOST_ROLES = {"host-a": ("baseline", "toolchain")}
+HOST_ROLES = {"host-a": ("secret-scan", "toolchain")}
 
 
 @pytest.fixture
@@ -140,7 +142,7 @@ def test_fingerprint_difference_alone_is_drift(pins: ToolchainPins) -> None:
 
 def test_unimplemented_roles_are_reported_not_hidden(pins: ToolchainPins) -> None:
     (report,) = reports([fingerprint(pins, node="22.11.0", pi="1.2.3")], pins)
-    baseline = next(r for r in report.roles if r.role == "baseline")
+    baseline = next(r for r in report.roles if r.role == "secret-scan")
     assert baseline.status is RoleStatus.NOT_IMPLEMENTED
     assert check_exit_code([report]) == EXIT_OK
 
@@ -256,7 +258,7 @@ def test_missing_fingerprint_is_an_error_whenever_any_implemented_role_is_on_the
     pins: ToolchainPins,
 ) -> None:
     only_unimplemented = build_reports(
-        parse_events(task("ok", "probe")), {"host-a": ("baseline",)}, fleet_pins_of(pins)
+        parse_events(task("ok", "probe")), {"host-a": ("secret-scan",)}, fleet_pins_of(pins)
     )
     assert only_unimplemented[0].errors == ()
     assert expects_fingerprint(("secret-scan", "toolchain")) is True

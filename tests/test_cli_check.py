@@ -73,7 +73,7 @@ def test_check_text_output_names_the_drift(tmp_path: Path) -> None:
     assert result.returncode == 2
     assert "host-a: DRIFT" in result.stdout
     assert "node: expected 22.11.0, found missing" in result.stdout
-    assert "baseline: not implemented" in result.stdout
+    assert "secret-scan: not implemented" in result.stdout
 
 
 def test_check_unknown_limit_is_an_error_exit_1(tmp_path: Path) -> None:

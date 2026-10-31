@@ -29,6 +29,23 @@
           when: fleet_roles | length > 0
           tags: [fingerprint]
 
+        - name: Role baseline
+          ansible.builtin.include_role:
+            name: baseline
+            apply:
+              tags: [converge]
+          when: "'baseline' in fleet_roles"
+          tags: [converge]
+
+        - name: Fingerprint baseline
+          ansible.builtin.include_role:
+            name: baseline
+            tasks_from: fingerprint
+            apply:
+              tags: [fingerprint]
+          tags: [fingerprint]
+          when: "'baseline' in fleet_roles"
+
         - name: Role toolchain
           ansible.builtin.include_role:
             name: toolchain

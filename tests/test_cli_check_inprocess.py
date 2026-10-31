@@ -66,7 +66,7 @@ def test_check_json_and_text_in_process(
     assert main(["plan", "--check", *args]) == 2
     out = capsys.readouterr().out
     assert "host-a: DRIFT" in out and "plan --check: drift found (exit 2)" in out
-    assert "baseline: not implemented" in out
+    assert "baseline: drift" in out
 
 
 def test_unknown_jump_host_is_reported(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -1,0 +1,273 @@
+"""Real ``apply``, ``check`` and ``verify`` of the baseline role in a throwaway HOME.
+
+Everything unprivileged runs here with real ansible. The privileged path (apt-get, linger) is
+never exercised on this host: these tests only ever use packages that are already installed, or
+a package that cannot exist, and point the privilege probe at a path that has no sudo. The apt
+path itself is proven inside a real container (tests/containers/test_baseline_scenario.py).
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+from herdr_fleet.baseline import BaselineFingerprint, baseline_pins, compare_baseline
+from herdr_fleet.config import load_config
+from herdr_fleet.fingerprint import Fingerprint
+from herdr_fleet.report import ParsedEvents, parse_events
+from herdr_fleet.runner import Mode, ansible_dir, run_playbook
+from tests.helpers import CONFIG_EXAMPLE, example_extra_vars
+
+INSTALLED = ["dpkg", "bash"]  # Debian essentials: present wherever these tests can run
+ABSENT = "herdr-fleet-test-absent-pkg"
+NO_SUDO = "/nonexistent/sudo"
+ROLE = ansible_dir() / "roles" / "baseline"
+
+LOCAL = {
+    "all": {
+        "hosts": {
+            "h": {
+                "ansible_connection": "local",
+                "ansible_python_interpreter": "auto_silent",
+                "fleet_roles": ["baseline"],
+            }
+        }
+    }
+}
+
+
+@pytest.fixture(autouse=True)
+def never_root() -> None:
+    assert os.geteuid() != 0, "the baseline tests must never run as root on the host"
+
+
+@pytest.fixture
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    directory = tmp_path / "home"
+    directory.mkdir()
+    monkeypatch.setenv("HOME", str(directory))
+    return directory
+
+
+def variables(**over: object) -> dict[str, object]:
+    extra = example_extra_vars()
+    extra.update(baseline_packages=INSTALLED, baseline_sudo=NO_SUDO, baseline_tailscale=NO_SUDO)
+    extra.update(over)
+    return extra
+
+
+def converge(mode: Mode, *, ok: bool = True, **over: object) -> ParsedEvents:
+    result = run_playbook(LOCAL, variables(**over), mode)
+    if ok:
+        assert result.returncode == 0, result.stdout[-3000:] + result.stderr
+    return parse_events(result.stdout)
+
+
+def changed(events: ParsedEvents) -> list[str]:
+    return [t.task for t in events.tasks if t.status == "changed"]
+
+
+def verify(**over: object) -> Fingerprint:
+    events = converge(Mode.VERIFY, **over)
+    assert not events.noise, events.noise
+    return events.fingerprints["h"]
+
+
+def section(**over: object) -> BaselineFingerprint:
+    return BaselineFingerprint.from_json(verify(**over).sections["baseline"])
+
+
+def pins_with(packages: list[str]):  # type: ignore[no-untyped-def]
+    from dataclasses import replace
+
+    return replace(baseline_pins(load_config(CONFIG_EXAMPLE)), packages=tuple(packages))
+
+
+def messages(**over: object) -> list[str]:
+    packages = over.get("baseline_packages", INSTALLED)
+    return [d.message for d in compare_baseline(verify(**over), pins_with(packages))]  # type: ignore[arg-type]
+
+
+def untouched(home: Path) -> bool:
+    """Nothing but ansible's own scratch directory exists in the throwaway HOME."""
+    return [p.name for p in home.iterdir() if p.name != ".ansible"] == []
+
+
+def mode_of(path: Path) -> str:
+    return format(path.stat().st_mode & 0o7777, "04o")
+
+
+def failure(**over: object) -> str:
+    result = run_playbook(LOCAL, variables(**over), Mode.APPLY)
+    assert result.returncode != 0
+    return result.stdout + result.stderr
+
+
+def test_apply_creates_the_directories_with_their_modes(home: Path) -> None:
+    converge(Mode.APPLY)
+    assert mode_of(home / ".config/herdr-engineering") == "0700"
+    assert mode_of(home / ".local/share/herdr-engineering") == "0700"
+    assert mode_of(home / ".local/share/herdr-engineering/state") == "0750"
+    assert mode_of(home / ".local/share/herdr-engineering/artifacts") == "0750"
+    assert (home / ".local/bin").is_dir()
+    assert messages() == []
+
+
+def test_second_apply_changes_nothing(home: Path) -> None:
+    converge(Mode.APPLY)
+    assert changed(converge(Mode.APPLY)) == []
+    assert changed(converge(Mode.CHECK)) == []
+
+
+def test_check_on_a_fresh_home_reports_directories_and_writes_nothing(home: Path) -> None:
+    events = converge(Mode.CHECK)
+    assert changed(events) != []
+    assert untouched(home)
+    assert messages() == [
+        "dir ~/.config/herdr-engineering: expected mode 0700, found missing",
+        "dir ~/.local/share/herdr-engineering: expected mode 0700, found missing",
+        "dir ~/.local/share/herdr-engineering/state: expected mode 0750, found missing",
+        "dir ~/.local/share/herdr-engineering/artifacts: expected mode 0750, found missing",
+        "dir ~/.local/bin: expected present, found missing",
+    ]
+
+
+def test_wrong_modes_and_removed_directories_are_named_and_repaired(home: Path) -> None:
+    converge(Mode.APPLY)
+    (home / ".config/herdr-engineering").chmod(0o755)
+    (home / ".local/bin").rmdir()
+    assert messages() == [
+        "dir ~/.config/herdr-engineering: expected mode 0700, found 0755",
+        "dir ~/.local/bin: expected present, found missing",
+    ]
+    converge(Mode.APPLY)
+    assert messages() == []
+    assert mode_of(home / ".config/herdr-engineering") == "0700"
+
+
+def test_the_binary_directory_keeps_the_mode_it_has(home: Path) -> None:
+    (home / ".local/bin").mkdir(parents=True)
+    (home / ".local/bin").chmod(0o711)
+    converge(Mode.APPLY)
+    assert mode_of(home / ".local/bin") == "0711"
+
+
+def test_installed_packages_are_reported_installed(home: Path) -> None:
+    found = section()
+    assert found.packages == {"dpkg": "installed", "bash": "installed"}
+    assert found.user == os.environ.get("USER", found.user)
+
+
+def test_a_missing_package_is_pending_in_check_mode_and_nothing_is_written(home: Path) -> None:
+    events = converge(Mode.CHECK, baseline_packages=[*INSTALLED, ABSENT])
+    assert f"install packages {ABSENT} (pending)" in changed(events)
+    assert not any(t.status == "failed" for t in events.tasks)
+    assert untouched(home)
+    assert (
+        messages(baseline_packages=[*INSTALLED, ABSENT]).count(
+            f"package {ABSENT}: expected installed, found missing"
+        )
+        == 1
+    )
+
+
+def test_apply_without_root_names_the_exact_command_and_changes_nothing(home: Path) -> None:
+    other = "herdr-fleet-test-absent-two"
+    text = failure(baseline_packages=[*INSTALLED, ABSENT, other])
+    assert f"sudo apt-get install -y {ABSENT} {other}" in text
+    assert untouched(home)
+
+
+def test_no_privilege_probe_when_nothing_privileged_is_pending(home: Path) -> None:
+    # The sudo path does not exist; applying with everything installed must not need it.
+    converge(Mode.APPLY)
+    assert messages() == []
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"),
+    [("exit 0", "up"), ("exit 1", "down")],
+)
+def test_tailscale_up_and_down_are_reported_and_never_drift(
+    home: Path, tmp_path: Path, script: str, expected: str
+) -> None:
+    tool = tmp_path / "tailscale"
+    tool.write_text(f"#!/bin/sh\n{script}\n")
+    tool.chmod(0o755)
+    assert section(baseline_tailscale=str(tool)).tailscale == expected
+    assert [m for m in messages(baseline_tailscale=str(tool)) if "tailscale" in m.lower()] == []
+
+
+def test_tailscale_absent_is_reported_and_never_drift(home: Path) -> None:
+    assert section().tailscale == "absent"
+    assert all("tailscale" not in m.lower() for m in messages())
+
+
+def test_the_python_version_is_reported_from_the_hosts_python3(home: Path) -> None:
+    out = subprocess.run(["python3", "--version"], capture_output=True, text=True, check=True)
+    assert section().python3_version == out.stdout.strip().removeprefix("Python ")
+
+
+def linger_on_this_host() -> str:
+    user = (
+        os.environ.get("USER")
+        or subprocess.run(["id", "-un"], capture_output=True, text=True, check=True).stdout.strip()
+    )
+    try:
+        done = subprocess.run(
+            ["loginctl", "show-user", user, "--property=Linger", "--value"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return "unmanaged"
+    return done.stdout.strip() if done.returncode == 0 and done.stdout.strip() else "unmanaged"
+
+
+def test_linger_is_unmanaged_unless_herdr_engineering_is_on_the_host(home: Path) -> None:
+    assert section().linger == "unmanaged"
+
+
+def test_linger_matches_what_loginctl_reports_and_check_never_enables_it(home: Path) -> None:
+    real = linger_on_this_host()
+    events = converge(Mode.CHECK, baseline_manage_linger=True)
+    pending = [t for t in changed(events) if t.startswith("enable linger")]
+    found = section(baseline_manage_linger=True)
+    assert found.linger == real
+    assert (len(pending) == 1) == (real == "no")
+    assert linger_on_this_host() == real  # check mode left it alone
+
+
+def tasks_of(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+
+    def walk(items: list[dict[str, Any]]) -> None:
+        for item in items:
+            out.append(item)
+            for key in ("block", "rescue", "always"):
+                walk(item.get(key, []))
+
+    walk(yaml.safe_load(path.read_text()) or [])
+    return out
+
+
+def test_only_the_apt_and_linger_tasks_carry_privilege_escalation() -> None:
+    escalated: dict[str, str] = {}
+    for path in sorted((ROLE / "tasks").glob("*.yml")):
+        for task in tasks_of(path):
+            if any(key.startswith("become") for key in task):
+                (command,) = [v for k, v in task.items() if k == "ansible.builtin.command"]
+                escalated[str(task["name"])] = str(command["argv"])
+    assert len(escalated) == 3
+    joined = " ".join(escalated.values())
+    assert "apt-get" in joined and "update" in joined and "install" in joined
+    assert "enable-linger" in joined
+    assert sum("apt-get" in v for v in escalated.values()) == 2
+    play = yaml.safe_load((ansible_dir() / "playbooks" / "converge.yml").read_text())
+    assert "become" not in yaml.safe_dump(play)

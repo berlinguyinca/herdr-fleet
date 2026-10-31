@@ -1,0 +1,114 @@
+---
+# Read-only and unprivileged; runs in check mode too.
+- name: require the pins from fleet-config.yaml
+  ansible.builtin.assert:
+    that:
+      - baseline_packages is defined
+      - baseline_macos_commands is defined
+      - baseline_dirs is defined
+    fail_msg: baseline_* variables come from fleet-config.yaml via herdr-fleet; do not run this role by hand
+    quiet: true
+
+- name: installed apt packages
+  ansible.builtin.command:
+    argv: [dpkg-query, -W, "-f=${db:Status-Abbrev}", "{{ item }}"]
+  loop: "{{ baseline_packages }}"
+  register: baseline_dpkg
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: ansible_facts.os_family == 'Debian'
+
+- name: required commands
+  ansible.builtin.command:
+    argv: [sh, -c, 'command -v "$1"', _, "{{ item }}"]
+  loop: "{{ baseline_macos_commands }}"
+  register: baseline_commands
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: ansible_facts.os_family != 'Debian'
+
+# One entry per package (Debian) or command (everything else): installed or missing.
+- name: package state
+  ansible.builtin.set_fact:
+    baseline_package_state: >-
+      {%- set ns = namespace(out={}) -%}
+      {%- if ansible_facts.os_family == 'Debian' -%}
+      {%- for r in baseline_dpkg.results -%}
+      {%- set _ = ns.out.update({r.item: 'installed' if (r.stdout | default('')).startswith('ii') else 'missing'}) -%}
+      {%- endfor -%}
+      {%- else -%}
+      {%- for r in baseline_commands.results -%}
+      {%- set _ = ns.out.update({r.item: 'installed' if r.rc == 0 else 'missing'}) -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {{ ns.out }}
+
+- name: names that are missing
+  ansible.builtin.set_fact:
+    baseline_missing: "{{ baseline_package_state | dict2items | selectattr('value', 'eq', 'missing') | map(attribute='key') | list }}"
+
+- name: managed directories
+  ansible.builtin.stat:
+    path: "{{ baseline_home }}/{{ item.path | regex_replace('^~/', '') }}"
+  loop: "{{ baseline_dirs }}"
+  register: baseline_dir_stats
+  check_mode: false
+
+- name: directory state
+  ansible.builtin.set_fact:
+    baseline_dir_state: >-
+      {%- set ns = namespace(out={}) -%}
+      {%- for r in baseline_dir_stats.results -%}
+      {%- set _ = ns.out.update({r.item.path: (r.stat.mode if r.stat.isdir | default(false) else 'missing')}) -%}
+      {%- endfor -%}
+      {{ ns.out }}
+
+- name: tailscale on the path
+  ansible.builtin.command:
+    argv: [sh, -c, 'command -v "$1"', _, "{{ baseline_tailscale }}"]
+  register: baseline_tailscale_found
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: tailscale status
+  ansible.builtin.command:
+    argv: ["{{ baseline_tailscale }}", status]
+  register: baseline_tailscale_status
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: baseline_tailscale_found.rc == 0
+
+- name: python3 version
+  ansible.builtin.command:
+    argv: [python3, --version]
+  register: baseline_python
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: linger
+  ansible.builtin.command:
+    argv: [loginctl, show-user, "{{ baseline_user }}", --property=Linger, --value]
+  register: baseline_linger_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: baseline_manage_linger | bool and ansible_facts.system == 'Linux'
+
+- name: linger state
+  ansible.builtin.set_fact:
+    baseline_linger: >-
+      {{ (baseline_linger_probe.stdout | default('') | trim)
+      if (baseline_linger_probe.rc | default(1)) == 0
+      and (baseline_linger_probe.stdout | default('') | trim) in ['yes', 'no']
+      else 'unmanaged' }}
+    baseline_tailscale_state: >-
+      {{ 'absent' if baseline_tailscale_found.rc != 0
+      else ('up' if baseline_tailscale_status.rc == 0 else 'down') }}
+    baseline_python_version: >-
+      {{ (baseline_python.stdout | trim | regex_replace('^Python ', ''))
+      if baseline_python.rc == 0 and baseline_python.stdout | length > 0 else None }}

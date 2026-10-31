@@ -1,0 +1,107 @@
+---
+- name: probe the baseline
+  ansible.builtin.include_tasks: probe.yml
+
+- name: work out what needs privileges
+  ansible.builtin.set_fact:
+    baseline_wants_linger: "{{ baseline_linger == 'no' }}"
+    baseline_apt_names: "{{ baseline_missing if ansible_facts.os_family == 'Debian' else [] }}"
+
+# Other platforms cannot be repaired by apt: macOS installs through Homebrew without root, anything
+# else is the operator's package manager.
+- name: unsupported package manager
+  ansible.builtin.fail:
+    msg: >-
+      baseline cannot install {{ baseline_missing | join(' ') }} on {{ ansible_facts.distribution }};
+      install them with the system package manager, then re-run apply
+  when: >-
+    not ansible_check_mode and baseline_missing | length > 0
+    and ansible_facts.os_family != 'Debian' and ansible_facts.system != 'Darwin'
+
+# Check mode names what apply would install or enable, and runs nothing privileged.
+- name: install packages {{ baseline_apt_names | join(' ') }} (pending)
+  ansible.builtin.command:
+    argv: [/bin/true]
+  changed_when: true
+  check_mode: false
+  when: ansible_check_mode and baseline_apt_names | length > 0
+
+- name: enable linger {{ baseline_user }} (pending)
+  ansible.builtin.command:
+    argv: [/bin/true]
+  changed_when: true
+  check_mode: false
+  when: ansible_check_mode and baseline_wants_linger | bool
+
+# Apply only, and only when something privileged is really pending: learn first whether privileges
+# are available so a missing root fails with the one command the operator can run by hand.
+- name: is this user root
+  ansible.builtin.set_fact:
+    baseline_is_root: "{{ ansible_facts.user_uid | int == 0 }}"
+
+- name: can privileged commands run without a password
+  ansible.builtin.command:
+    argv: ["{{ baseline_sudo }}", -n, "true"]
+  register: baseline_sudo_probe
+  failed_when: false
+  changed_when: false
+  when: >-
+    not ansible_check_mode and not baseline_is_root
+    and (baseline_apt_names | length > 0 or baseline_wants_linger | bool)
+
+- name: root is needed to install packages
+  ansible.builtin.fail:
+    msg: >-
+      baseline needs root to install: {{ baseline_apt_names | join(' ') }};
+      run `sudo apt-get install -y {{ baseline_apt_names | join(' ') }}` once, then re-run apply
+  when: >-
+    not ansible_check_mode and baseline_apt_names | length > 0
+    and not baseline_is_root and baseline_sudo_probe.rc != 0
+
+- name: root is needed to enable linger
+  ansible.builtin.fail:
+    msg: >-
+      baseline needs root to enable linger for {{ baseline_user }};
+      run `sudo loginctl enable-linger {{ baseline_user }}` once, then re-run apply
+  when: >-
+    not ansible_check_mode and baseline_wants_linger | bool
+    and not baseline_is_root and baseline_sudo_probe.rc != 0
+
+- name: refresh the apt package index
+  ansible.builtin.command:
+    argv: [apt-get, update, -q]
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  become: "{{ not baseline_is_root }}"
+  changed_when: true
+  when: not ansible_check_mode and baseline_apt_names | length > 0
+
+- name: install the missing packages
+  ansible.builtin.command:
+    argv: "{{ ['apt-get', 'install', '-y', '--no-install-recommends'] + baseline_apt_names }}"
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  become: "{{ not baseline_is_root }}"
+  changed_when: true
+  when: not ansible_check_mode and baseline_apt_names | length > 0
+
+- name: install the missing commands with Homebrew
+  ansible.builtin.command:
+    argv: [brew, install, "{{ item }}"]
+  loop: "{{ baseline_missing }}"
+  changed_when: true
+  when: not ansible_check_mode and ansible_facts.system == 'Darwin'
+
+- name: enable linger for {{ baseline_user }}
+  ansible.builtin.command:
+    argv: [loginctl, enable-linger, "{{ baseline_user }}"]
+  become: "{{ not baseline_is_root }}"
+  changed_when: true
+  when: not ansible_check_mode and baseline_wants_linger | bool
+
+- name: managed directories exist
+  ansible.builtin.file:
+    path: "{{ baseline_home }}/{{ item.path | regex_replace('^~/', '') }}"
+    state: directory
+    mode: "{{ item.mode if item.mode else omit }}"
+  loop: "{{ baseline_dirs }}"

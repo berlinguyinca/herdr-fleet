@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import cast
 
+from herdr_fleet.baseline import compare_baseline
 from herdr_fleet.fingerprint import Difference, Fingerprint, FingerprintError, compare
 from herdr_fleet.herdr import compare_herdr
 from herdr_fleet.herdr_engineering import compare_herdr_engineering
@@ -41,6 +42,10 @@ def _compare_herdr_engineering(fp: Fingerprint, pins: FleetPins) -> list[Differe
     return compare_herdr_engineering(fp, pins.herdr_engineering)
 
 
+def _compare_baseline(fp: Fingerprint, pins: FleetPins) -> list[Difference]:
+    return compare_baseline(fp, pins.baseline)
+
+
 def _compare_pi_runtime(fp: Fingerprint, pins: FleetPins) -> list[Difference]:
     return compare_pi_runtime(fp, pins.pi_runtime)
 
@@ -51,6 +56,7 @@ ROLE_COMPARATORS: Mapping[str, Comparator] = {
     "toolchain": _compare_toolchain,
     "herdr": _compare_herdr,
     "herdr-engineering": _compare_herdr_engineering,
+    "baseline": _compare_baseline,
     "pi-runtime": _compare_pi_runtime,
 }
 

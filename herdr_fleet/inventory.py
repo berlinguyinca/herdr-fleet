@@ -7,6 +7,7 @@ import shlex
 from collections.abc import Sequence
 from importlib import resources
 
+from herdr_fleet.baseline import BaselinePins
 from herdr_fleet.config import FleetConfig, FleetLock, Host
 from herdr_fleet.herdr import HERDR_ASSETS, HerdrPins
 from herdr_fleet.herdr_engineering import HerdrEngineeringPins
@@ -15,7 +16,13 @@ from herdr_fleet.pins import fleet_pins
 from herdr_fleet.toolchain import CLI_SPECS, ToolchainPins
 
 # Roles that have an Ansible implementation in this release; the rest are planned, not run.
-IMPLEMENTED_ROLES: tuple[str, ...] = ("toolchain", "herdr", "herdr-engineering", "pi-runtime")
+IMPLEMENTED_ROLES: tuple[str, ...] = (
+    "baseline",
+    "toolchain",
+    "herdr",
+    "herdr-engineering",
+    "pi-runtime",
+)
 
 JsonObject = dict[str, object]
 
@@ -135,10 +142,19 @@ def _pi_runtime_vars(pins: PiRuntimePins) -> JsonObject:
     }
 
 
+def _baseline_vars(pins: BaselinePins) -> JsonObject:
+    return {
+        "baseline_packages": list(pins.packages),
+        "baseline_macos_commands": list(pins.macos_commands),
+        "baseline_dirs": [{"path": d.path, "mode": d.mode} for d in pins.dirs],
+    }
+
+
 def build_extra_vars(lock: FleetLock, config: FleetConfig) -> JsonObject:
     """Every role's Ansible variables; roles never read the lock or the config themselves."""
     pins = fleet_pins(lock, config)
     return {
+        **_baseline_vars(pins.baseline),
         **_toolchain_vars(pins.toolchain),
         **_herdr_vars(pins.herdr),
         **_herdr_engineering_vars(pins.herdr_engineering),
