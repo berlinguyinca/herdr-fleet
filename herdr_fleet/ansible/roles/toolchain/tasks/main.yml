@@ -40,14 +40,21 @@
     - "{{ toolchain_prefix }}/node"
     - "{{ toolchain_prefix }}/bin"
     - "{{ toolchain_cache_dir }}"
-    - "{{ toolchain_shim_dir }}"
   register: toolchain_dirs
+
+# ~/.local/bin is the user's own directory: create it if missing, never change its mode.
+- name: shim directory exists
+  ansible.builtin.file:
+    path: "{{ toolchain_shim_dir }}"
+    state: directory
+  register: toolchain_shim_dir_result
 
 # Check mode does not create directories, so steps that need them cannot be simulated until they
 # exist; the directory change above is already reported as drift.
 - name: work out whether later steps can run
   ansible.builtin.set_fact:
-    toolchain_can_run: "{{ not ansible_check_mode or not toolchain_dirs.changed }}"
+    toolchain_can_run: >-
+      {{ not ansible_check_mode or not (toolchain_dirs.changed or toolchain_shim_dir_result.changed) }}
 
 - name: probe the pinned node
   ansible.builtin.stat:
@@ -87,6 +94,13 @@
         remote_src: true
         extra_opts: ["--strip-components=1"]
       when: not ansible_check_mode
+
+    # The pinned dir exists without bin/node only after an interrupted install or by hand; mv
+    # would nest the staging dir inside it instead of replacing it.
+    - name: remove an incomplete node {{ toolchain_node_version }} directory
+      ansible.builtin.file:
+        path: "{{ toolchain_node_dir }}"
+        state: absent
 
     - name: move node {{ toolchain_node_version }} into place
       ansible.builtin.command:

@@ -2,6 +2,6 @@
 # Managed by herdr-fleet (role toolchain). Do not edit.
 # Runs {{ cli.command }} with the managed Node first on PATH, so the CLI's `#!/usr/bin/env node`
 # shebang never depends on nvm or on whichever Node is the shell default.
-PATH="{{ toolchain_prefix }}/bin${PATH:+:$PATH}"
+PATH={{ (toolchain_prefix ~ '/bin') | quote }}${PATH:+:$PATH}
 export PATH
-exec "{{ toolchain_prefix }}/bin/{{ cli.command }}" "$@"
+exec {{ (toolchain_prefix ~ '/bin/' ~ cli.command) | quote }} "$@"
