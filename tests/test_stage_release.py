@@ -11,6 +11,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -224,6 +226,99 @@ def test_a_locked_settings_file_asks_to_retry_and_stages_no_installed_marker(
     assert not (root_of(home, "pi") / "installed.json").exists()
 
 
+def age(path: Path, seconds: int) -> None:
+    moment = time.time() - seconds
+    os.utime(path, (moment, moment))
+
+
+def test_a_stale_settings_lock_from_a_crashed_writer_is_removed(
+    tmp_path: Path, pi_repo: tuple[str, str], npm_bin: Path
+) -> None:
+    home = tmp_path / "home"
+    lock = settings_of(home).parent / "settings.json.lock"
+    lock.mkdir(parents=True)
+    age(lock, 120)
+    result = stage_pi(home, pi_repo, npm_bin)
+    assert json.loads(settings_of(home).read_text())["packages"] == [result["sourceRoot"]]
+    assert not lock.exists()
+
+
+def test_a_fresh_settings_lock_is_waited_for_briefly_then_reported(
+    tmp_path: Path, pi_repo: tuple[str, str], npm_bin: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(stage_release, "LOCK_WAIT_SECONDS", 0.6)
+    home = tmp_path / "home"
+    lock = settings_of(home).parent / "settings.json.lock"
+    lock.mkdir(parents=True)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="locked"):
+        stage_pi(home, pi_repo, npm_bin)
+    assert time.monotonic() - started >= 0.5
+    assert lock.is_dir()  # a live writer's lock is never removed
+
+
+def test_a_lock_released_during_the_wait_lets_staging_finish(
+    tmp_path: Path, pi_repo: tuple[str, str], npm_bin: Path
+) -> None:
+    home = tmp_path / "home"
+    lock = settings_of(home).parent / "settings.json.lock"
+    lock.mkdir(parents=True)
+    releaser = threading.Timer(0.5, lock.rmdir)
+    releaser.start()
+    try:
+        result = stage_pi(home, pi_repo, npm_bin)
+    finally:
+        releaser.join()
+    assert describe(home, "pi") == result
+
+
+def test_a_symlinked_settings_file_stays_a_symlink_and_its_target_is_updated(
+    tmp_path: Path, pi_repo: tuple[str, str], npm_bin: Path
+) -> None:
+    home = tmp_path / "home"
+    real = tmp_path / "dotfiles" / "pi-settings.json"
+    real.parent.mkdir()
+    real.write_text('{"theme": "dark"}\n')
+    settings_of(home).parent.mkdir(parents=True)
+    settings_of(home).symlink_to(real)
+    result = stage_pi(home, pi_repo, npm_bin)
+    assert settings_of(home).is_symlink() and settings_of(home).resolve() == real
+    assert json.loads(real.read_text())["packages"] == [result["sourceRoot"]]
+    assert describe(home, "pi") == result
+
+
+def test_settings_keep_their_key_order_and_indentation(
+    tmp_path: Path, pi_repo: tuple[str, str], npm_bin: Path
+) -> None:
+    home = tmp_path / "home"
+    settings_of(home).parent.mkdir(parents=True)
+    settings_of(home).write_text(
+        '{\n    "zeta": 1,\n    "alpha": {"b": 2, "a": 1},\n    "mid": 3\n}\n'
+    )
+    stage_pi(home, pi_repo, npm_bin)
+    text = settings_of(home).read_text()
+    assert list(json.loads(text)) == ["zeta", "alpha", "mid", "packages"]
+    assert text.splitlines()[1] == '    "zeta": 1,'
+    assert text.endswith("}\n")
+    settings_of(home).write_text('{\n\t"b": 1,\n\t"a": 2\n}')
+    stage_release.stage(home, pi_repo[1], "pi", pi_repo[0], path_prefix=str(npm_bin), runner=run)
+    assert settings_of(home).read_text().splitlines()[1] == '\t"b": 1,'
+
+
+def test_describe_treats_a_non_string_non_object_package_as_not_attested(
+    tmp_path: Path, pi_repo: tuple[str, str], npm_bin: Path
+) -> None:
+    home = tmp_path / "home"
+    result = stage_pi(home, pi_repo, npm_bin)
+    value = json.loads(settings_of(home).read_text())
+    value["packages"] = [42, None, ["x"], result["sourceRoot"]]
+    settings_of(home).write_text(json.dumps(value))
+    assert describe(home, "pi") == result
+    value["packages"] = [42, None]
+    settings_of(home).write_text(json.dumps(value))
+    assert describe(home, "pi") is None
+
+
 def test_a_dirty_checkout_is_refused_and_preserved(
     tmp_path: Path, pi_repo: tuple[str, str], npm_bin: Path
 ) -> None:
@@ -410,3 +505,20 @@ def test_cli_requires_a_revision_and_a_repository_to_stage(tmp_path: Path) -> No
 def test_the_module_names_no_operator_repository() -> None:
     text = Path(stage_release.__file__).read_text()
     assert "github.com" not in text
+
+
+def test_git_runs_with_optional_locks_disabled_so_a_check_never_races_a_developers_git() -> None:
+    shown = run(["git", "-c", "alias.show-env=!printenv GIT_OPTIONAL_LOCKS", "show-env"])
+    assert shown == "0"
+
+
+def test_a_check_on_a_staged_release_leaves_the_git_index_untouched(
+    tmp_path: Path, pi_repo: tuple[str, str], npm_bin: Path
+) -> None:
+    home = tmp_path / "home"
+    result = stage_pi(home, pi_repo, npm_bin)
+    index = Path(result["sourceRoot"]) / ".git" / "index"
+    before = (index.stat().st_mtime_ns, index.read_bytes())
+    time.sleep(0.05)
+    assert describe(home, "pi") == result
+    assert (index.stat().st_mtime_ns, index.read_bytes()) == before

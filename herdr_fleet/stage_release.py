@@ -22,25 +22,38 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 KINDS = ("pi", "herdr")
 
+# A settings.json.lock directory older than this belongs to a writer that died; a younger one is
+# waited for, for at most LOCK_WAIT_SECONDS, because a live Pi writer holds it for milliseconds.
+LOCK_STALE_SECONDS = 30
+LOCK_WAIT_SECONDS = 3.0
+LOCK_POLL_SECONDS = 0.1
+
+# Read-only git must not take index.lock: a check run beside a developer's git would race with it.
+GIT_ENV_READ_ONLY = {"GIT_OPTIONAL_LOCKS": "0"}
+
 
 def run(cmd, *, cwd=None, env=None):
+    if cmd and cmd[0] == "git" and env is None:
+        env = dict(os.environ, **GIT_ENV_READ_ONLY)
     result = subprocess.run(
         cmd, cwd=cwd, env=env, check=True, capture_output=True, text=True, timeout=900
     )
     return result.stdout.strip()
 
 
-def atomic_json(path, data):
+def atomic_json(path, data, indent=2, trailing_newline=True):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=".release-")
     try:
         with os.fdopen(fd, "w") as stream:
-            json.dump(data, stream, indent=2)
-            stream.write("\n")
+            json.dump(data, stream, indent=indent)
+            if trailing_newline:
+                stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, str(path))
@@ -204,20 +217,54 @@ def _install_herdr(home, release, python, runner):
     verify_herdr_distribution(home, release, runner)
 
 
+def detect_indent(raw):
+    """The indent unit of an existing JSON document (a tab, or N spaces); 2 when it has none."""
+    match = re.search(rb"^([ \t]+)\S", raw or b"", re.MULTILINE)
+    if match is None:
+        return 2
+    unit = match.group(1)
+    return "\t" if unit.startswith(b"\t") else len(unit)
+
+
+def acquire_settings_lock(lock):
+    """mkdir the lock, removing a stale one and waiting briefly for a live one."""
+    deadline = time.monotonic() + LOCK_WAIT_SECONDS
+    while True:
+        try:
+            lock.mkdir(mode=0o700)
+            return
+        except FileExistsError:
+            pass
+        try:
+            if time.time() - lock.stat().st_mtime > LOCK_STALE_SECONDS:
+                lock.rmdir()  # empty directory: a live writer's lock is never forced
+                continue
+        except FileNotFoundError:
+            continue
+        except OSError:
+            pass
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Pi settings are locked; retry safely")
+        time.sleep(LOCK_POLL_SECONDS)
+
+
 def _write_settings(pending):
     settings, before, value = pending
     settings.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Pi's FileSettingsStorage uses proper-lockfile with realpath:false: the atomic
     # settings.json.lock mkdir is its writer exclusion protocol.
     settings_lock = settings.with_name(settings.name + ".lock")
-    try:
-        settings_lock.mkdir(mode=0o700)
-    except FileExistsError as exc:
-        raise RuntimeError("Pi settings are locked; retry safely") from exc
+    acquire_settings_lock(settings_lock)
     try:
         if (settings.read_bytes() if settings.exists() else None) != before:
             raise RuntimeError("Pi settings changed during staging; retry safely")
-        atomic_json(settings, value)
+        # Replace the file a symlink points at, not the link (dotfile managers keep it elsewhere).
+        atomic_json(
+            Path(os.path.realpath(str(settings))),
+            value,
+            indent=detect_indent(before),
+            trailing_newline=before is None or before.endswith(b"\n"),
+        )
     finally:
         settings_lock.rmdir()
 
@@ -263,7 +310,10 @@ def describe(home, kind, runner=run):
         if kind == "pi":
             settings = json.loads((home / ".pi/agent/settings.json").read_text())
             packages = settings.get("packages", [])
-            sources = [e if isinstance(e, str) else e.get("source") for e in packages]
+            sources = [
+                e if isinstance(e, str) else e.get("source") if isinstance(e, dict) else None
+                for e in packages
+            ]
             if str(release) not in sources or not (release / "node_modules").is_dir():
                 return None
         else:
