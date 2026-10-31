@@ -205,8 +205,8 @@ def _apply_one(
     applied = run_playbook(inventory, extra_vars, Mode.APPLY)
     (done,) = build_reports(parse_events(applied.stdout), only, pins, expect_fingerprint=False)
     errors = _runner_errors(applied, [done])
-    if errors or done.status != "ok":
-        return done, errors
+    if errors or done.status in ("failed", "not-attempted"):
+        return done, errors  # changes made by apply show as drift here; only failure stops
     verified = run_playbook(inventory, extra_vars, Mode.VERIFY)
     (report,) = build_reports(parse_events(verified.stdout), only, pins)
     report = replace(report, changed_count=done.changed_count)

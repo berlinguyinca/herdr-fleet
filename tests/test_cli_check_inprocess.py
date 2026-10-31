@@ -152,3 +152,38 @@ def test_apply_stops_at_the_first_failed_host_and_reports_the_rest_not_attempted
         ("host-a", "failed"),
         ("host-b", "not-attempted"),
     ]
+
+
+def test_apply_that_made_changes_and_verifies_exits_zero(
+    tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Node and both CLIs are already in place (no network); apply still creates links and shims.
+
+    Changes made by apply show up as drift in the apply pass; only failure may stop the run, and
+    the per-host verification that follows must pass.
+    """
+    prefix = home / ".local/share/herdr-fleet/toolchain"
+    node = prefix / "node/22.11.0/bin"
+    node.mkdir(parents=True)
+    for name, body in (("node", "#!/bin/sh\necho v22.11.0\n"), ("npm", ""), ("npx", "")):
+        (node / name).write_text(body or "#!/bin/sh\n")
+        (node / name).chmod(0o755)
+    (prefix / "bin").mkdir()
+    for package, command, version in (
+        ("@earendil-works/pi-coding-agent", "pi", "1.2.3"),
+        ("@openai/codex", "codex", "0.9.0"),
+    ):
+        pkg_dir = prefix / "lib/node_modules" / package
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "package.json").write_text(f'{{"version": "{version}"}}')
+        (prefix / "bin" / command).write_text("#!/bin/sh\nexit 0\n")
+        (prefix / "bin" / command).chmod(0o755)
+    (home / ".local/bin").mkdir(parents=True)
+    (home / ".bash_profile").write_text('export PATH="$HOME/.local/bin:$PATH"\n')
+
+    args = [*inputs(tmp_path), "--connection", "local", "--limit", "host-a", "--yes", "--json"]
+    assert main(["apply", *args]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    (host,) = payload["hosts"]
+    assert host["status"] == "ok" and host["changed"] > 0 and payload["errors"] == []
+    assert (home / ".local/bin/pi").is_file()
