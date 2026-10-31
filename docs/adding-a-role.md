@@ -22,4 +22,26 @@ script or timer (spec 0001, "Extending the fleet").
 6. **State.** If the role holds state that cannot be rebuilt, list it under the role's
    `state:` key so backup and restore cover it.
 
+7. **Ansible content.** The role lives in `herdr_fleet/ansible/roles/<role>/` (shipped as package
+   data) and is applied by `playbooks/converge.yml`. Pins reach it only as extra-vars built in
+   `herdr_fleet/inventory.py:build_extra_vars` from `fleet.lock`; never hard-code a version in
+   the role. Defaults that are not pins (paths) go in `defaults/main.yml`.
+8. **Fingerprint.** Report what the role makes true in `tasks/fingerprint.yml`, emit it through
+   the `fleet_json` callback, model it in a typed dataclass (see `herdr_fleet/fingerprint.py`),
+   and add a unit-tested `compare(fingerprint, pins)` returning specific differences. Add the
+   role to `IMPLEMENTED_ROLES` in `herdr_fleet/inventory.py`; unlisted roles are reported
+   `not-implemented`.
+9. **Check mode.** Tasks that depend on earlier changes (an extracted Node you want to run)
+   cannot run when `--check` skipped the earlier step; gate them on the thing existing, and let
+   check mode report the skipped step as a pending change (the report treats "check mode"
+   skips as `would_change`).
+10. **Container scenarios.** Add scenarios under `tests/containers/` (fresh, converged,
+    idempotent, drift, failure) against real downloads. See [testing.md](testing.md).
+
+Lessons from the toolchain role: pin and verify downloads (`get_url` with `checksum:
+sha256:...` never extracts an unverified file); extract to a `.partial` directory and rename;
+give the user a stable entry point (shim) rather than relying on the shell's PATH; and
+fingerprint the user-visible outcome (`command -v` in a non-interactive shell), not just the
+installed files.
+
 Run `scripts/ci.sh` before opening a PR.

@@ -95,6 +95,7 @@
     src: "{{ toolchain_node_dir }}/bin/{{ item }}"
     dest: "{{ toolchain_prefix }}/bin/{{ item }}"
     state: link
+    force: true  # check mode: the pinned node may not be extracted yet, so src does not exist
   loop: [node, npm, npx]
   when: toolchain_can_run
 
