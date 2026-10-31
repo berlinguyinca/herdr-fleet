@@ -18,6 +18,15 @@
         "autospec": {"$ref": "#/$defs/commit"}
       }
     },
+    "repo_urls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "herdr-engineering": {"$ref": "#/$defs/repo_url"},
+        "pi-engineering": {"$ref": "#/$defs/repo_url"},
+        "autospec": {"$ref": "#/$defs/repo_url"}
+      }
+    },
     "clis": {
       "type": "object",
       "additionalProperties": false,
@@ -45,6 +54,7 @@
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
     },
+    "repo_url": {"type": "string", "pattern": "^https://[^\\s@/][^\\s@]*$"},
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
     "binary": {

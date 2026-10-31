@@ -43,6 +43,8 @@ class FleetConfig:
     gateway_url: str | None
     woodpecker_repos: tuple[str, ...]
     secrets_path: str | None
+    control_plane_url: str | None = None
+    baseline_extra_packages: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,6 +159,30 @@ def _cross_check_errors(path: Path, config: FleetConfig) -> list[str]:
                 f"{path}: services.ci_server.ingress: host '{host.name}' has role 'ci-server', "
                 "which needs an ingress setting (tunnel or public) so GitHub can reach the webhook"
             )
+    errors.extend(_role_dependency_errors(path, config))
+    return errors
+
+
+def _role_dependency_errors(path: Path, config: FleetConfig) -> list[str]:
+    errors: list[str] = []
+    for host in config.hosts:
+        roles = f"{path}: hosts.{host.name}.roles: role"
+        if "herdr-engineering" in host.roles:
+            if config.gateway_url is None:
+                errors.append(
+                    f"{roles} 'herdr-engineering' needs services.gateway.url (the fabric URL it "
+                    "writes to fabric.env); set services.gateway.url"
+                )
+            if "herdr" not in host.roles:
+                errors.append(
+                    f"{roles} 'herdr-engineering' needs the 'herdr' role on the same host; "
+                    f"add 'herdr' to hosts.{host.name}.roles"
+                )
+        if "pi-runtime" in host.roles and "toolchain" not in host.roles:
+            errors.append(
+                f"{roles} 'pi-runtime' needs the 'toolchain' role on the same host (it installs "
+                f"Node and npm); add 'toolchain' to hosts.{host.name}.roles"
+            )
     return errors
 
 
@@ -172,6 +198,12 @@ def load_config(path: Path) -> FleetConfig:
         gateway_url=cast("str | None", _section(_section(doc, "services"), "gateway").get("url")),
         woodpecker_repos=tuple(cast(list[str], _section(doc, "woodpecker").get("repos", []))),
         secrets_path=cast("str | None", _section(doc, "secrets").get("path")),
+        control_plane_url=cast(
+            "str | None", _section(_section(doc, "services"), "control_plane").get("url")
+        ),
+        baseline_extra_packages=tuple(
+            cast(list[str], _section(doc, "baseline").get("extra_packages", []))
+        ),
     )
     errors = _cross_check_errors(path, config)
     if errors:

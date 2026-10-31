@@ -11,6 +11,12 @@ script or timer (spec 0001, "Extending the fleet").
    `herdr_fleet/schemas/fleet-lock.schema.json` (reject ranges, branches, `latest`, short SHAs,
    tag-only images) and to `examples/fleet.lock.example.yaml`. New fields should be optional with
    safe defaults; a breaking change bumps `version` and the loader prints the migration.
+   Additive optional keys do not bump `version`, but the PR adding one must say which
+   herdr-fleet release first understands it: the loader is strict, so an older herdr-fleet rejects
+   a lock that uses the key ("additional property"), which is acceptable because the lock pins
+   `herdr_fleet.version`. Repository clone URLs live in the lock's optional `repo_urls` (a URL
+   change is a trust change) and have no built-in defaults; `herdr_fleet/repos.py:repo_url`
+   fails with a message naming the key when a role needs one that is missing.
 2. **Role name.** Add it to the `roles` enum in `herdr_fleet/schemas/fleet-config.schema.json`
    and add a row to the spec's role table.
 3. **Order.** Put it in `ROLE_ORDER` in `herdr_fleet/roles.py` after the roles it depends on.
