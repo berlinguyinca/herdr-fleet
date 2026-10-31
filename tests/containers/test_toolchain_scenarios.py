@@ -218,7 +218,7 @@ def test_e_original_bug_shim_uses_managed_node_despite_nvm_default(clean: Fleet)
     rc_raw, out_raw, used_raw = run_with_decoy_first(
         clean.runtime,
         nvm_bin,
-        f"{PREFIX}/lib/node_modules/.bin/pi --version" if False else f"{PREFIX}/bin/pi --version",
+        f"{PREFIX}/bin/pi --version",
     )
     assert decoy in set(used_raw.split()), "without the shim the CLI must pick up the decoy Node"
     assert managed not in set(used_raw.split())

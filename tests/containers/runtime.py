@@ -116,7 +116,6 @@ class DockerRuntime(ContainerRuntime):
         super().__init__()
         self.image = f"{PREFIX}img-{self.unique}"
         self.container = f"{PREFIX}{self.unique}"
-        self._created = False
 
     @classmethod
     def unavailable_reason(cls) -> str | None:
@@ -134,7 +133,6 @@ class DockerRuntime(ContainerRuntime):
                 self.image, "sleep", "infinity",
             ]
         )  # fmt: skip
-        self._created = True
 
     def exec(
         self, argv: Sequence[str], *, stdin: str | None = None, timeout: float = 900
@@ -151,7 +149,9 @@ class DockerRuntime(ContainerRuntime):
 
     def stop(self) -> list[str]:
         removed: list[str] = []
-        if self._created:
+        # Always try: `docker run` can create the named container and still fail (for example
+        # when the command cannot start), leaving it behind.
+        if _run(["docker", "container", "inspect", self.container]).returncode == 0:
             _run(["docker", "rm", "--force", self.container])
             removed.append(f"container {self.container}")
         if _run(["docker", "image", "inspect", self.image]).returncode == 0:
@@ -232,8 +232,13 @@ class ApptainerRuntime(ContainerRuntime):
             _run(["docker", "rmi", self.image])
             removed.append(f"image {self.image}")
         if self.workdir.exists():
+            # Read-only files or directories (npm caches, extracted trees) make rmtree fail.
+            _run(["chmod", "-R", "u+rwX", str(self.workdir)])
             shutil.rmtree(self.workdir, ignore_errors=True)
-            removed.append(f"dir {self.workdir} (home, cache, {self.sif.name})")
+            if self.workdir.exists():
+                removed.append(f"dir {self.workdir} NOT removed: files remain")
+            else:
+                removed.append(f"dir {self.workdir} (home, cache, {self.sif.name})")
         return removed
 
 
