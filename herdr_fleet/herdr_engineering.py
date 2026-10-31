@@ -122,12 +122,14 @@ def compare_herdr_engineering(fp: Fingerprint, pins: HerdrEngineeringPins) -> li
         )
     differences.extend(_fabric_env_differences(found, pins))
     short = pins.revision[:12]
-    if not found.fabric_unit_matches_release:
+    # macOS has no systemd: apply renders no unit there, so a missing unit is not drift.
+    if fp.system != "Darwin" and not found.fabric_unit_matches_release:
         state = "differs" if found.fabric_unit_present else "missing"
         differences.append(Difference("fabric agent unit", f"rendered from release {short}", state))
     if found.fabric_service == "inactive":
         differences.append(Difference("fabric agent", "active", "inactive"))
-    if not found.build_gate_matches_release:
+    # A release that ships no build gate has nothing to install (apply skips it): not drift.
+    if found.build_gate_release_sha256 is not None and not found.build_gate_matches_release:
         differences.append(
             Difference(
                 "build-gate", f"sha256 of release {short}", found.build_gate_sha256 or "missing"

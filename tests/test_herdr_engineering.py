@@ -56,8 +56,8 @@ def section(**over: object) -> dict[str, object]:
     return {**base, **over}
 
 
-def fingerprint(body: dict[str, object] | None) -> Fingerprint:
-    raw: dict[str, object] = {"system": "Linux", "machine": "x86_64"}
+def fingerprint(body: dict[str, object] | None, system: str = "Linux") -> Fingerprint:
+    raw: dict[str, object] = {"system": system, "machine": "x86_64"}
     if body is not None:
         raw["herdr_engineering"] = body
     return Fingerprint.from_json(raw)
@@ -215,9 +215,9 @@ def test_build_gate_differences_name_the_release(pins: HerdrEngineeringPins) -> 
     prefix = f"build-gate: expected sha256 of release {SHORT}, found "
     assert only(pins, build_gate_sha256=None) == [prefix + "missing"]
     assert only(pins, build_gate_sha256="d" * 64) == [prefix + "d" * 64]
-    assert only(pins, build_gate_sha256=None, build_gate_release_sha256=None) == [
-        prefix + "missing"
-    ]
+    # A release without a build gate has nothing to install: apply skips it, so it is no drift.
+    assert only(pins, build_gate_sha256=None, build_gate_release_sha256=None) == []
+    assert only(pins, build_gate_sha256="d" * 64, build_gate_release_sha256=None) == []
 
 
 def test_an_unknown_service_state_is_rejected() -> None:
@@ -232,3 +232,13 @@ def test_new_section_fields_round_trip() -> None:
     assert not HerdrEngineeringFingerprint.from_json(
         section(build_gate_sha256="d" * 64)
     ).build_gate_matches_release
+
+
+def test_macos_never_reports_the_fabric_unit_because_apply_cannot_render_it(
+    pins: HerdrEngineeringPins,
+) -> None:
+    body = section(fabric_unit_present=False, fabric_unit_matches_release=False)
+    assert [d.message for d in compare_herdr_engineering(fingerprint(body, "Darwin"), pins)] == []
+    assert [d.field for d in compare_herdr_engineering(fingerprint(body, "Linux"), pins)] == [
+        "fabric agent unit"
+    ]

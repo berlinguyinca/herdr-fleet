@@ -22,7 +22,7 @@ from herdr_fleet.herdr_engineering import (
 )
 from herdr_fleet.report import ParsedEvents, parse_events
 from herdr_fleet.runner import Mode, run_playbook
-from tests.eng_repo import BUILD_GATE, UNIT, Source, make_source
+from tests.eng_repo import BUILD_GATE, RELEASE_FILES, UNIT, Source, make_source
 from tests.helpers import example_extra_vars
 
 GATEWAY = "https://gateway.example.com"
@@ -455,3 +455,15 @@ def test_a_jinja_lookup_in_the_gateway_url_is_written_literally_and_never_runs(
     converge(tmp_path, source, Mode.APPLY, monkeypatch, herdr_engineering_gateway_url=evil)
     assert not marker.exists(), "an extra-var string was evaluated as a template"
     assert f"HERDR_ENGINEERING_FABRIC_URL={evil}\n" in env_file(tmp_path).read_text()
+
+
+def test_a_release_without_a_build_gate_is_not_permanent_drift(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {k: v for k, v in RELEASE_FILES.items() if k != "deploy/pi-build-gate/build-gate.ts"}
+    gateless = make_source(tmp_path_factory.mktemp("gateless") / "herdr-engineering", files)
+    converge(tmp_path, gateless, Mode.APPLY, monkeypatch)
+    assert not gate_file(tmp_path).exists()
+    fp = verify(tmp_path, gateless, monkeypatch)
+    assert section_of(fp).build_gate_release_sha256 is None
+    assert messages(fp, gateless) == []
