@@ -5,7 +5,13 @@ from __future__ import annotations
 import pytest
 
 from herdr_fleet.config import load_lock
-from herdr_fleet.fingerprint import Difference, Fingerprint, FingerprintError, compare
+from herdr_fleet.fingerprint import (
+    SECTION_KEYS,
+    Difference,
+    Fingerprint,
+    FingerprintError,
+    compare,
+)
 from herdr_fleet.toolchain import ToolchainPins, platform_key, toolchain_pins
 from tests.helpers import LOCK_EXAMPLE
 
@@ -135,7 +141,7 @@ def test_malformed_fingerprint_raises() -> None:
     with pytest.raises(FingerprintError, match="system"):
         Fingerprint.from_json({"machine": "x86_64"})
     with pytest.raises(FingerprintError, match="clis"):
-        Fingerprint.from_json({"system": "Linux", "machine": "x", "node_version": None})
+        Fingerprint.from_json({"system": "Linux", "machine": "x", "clis": ["not", "a", "map"]})
 
 
 def test_dangling_managed_bin_is_drift_even_with_the_right_package(pins: ToolchainPins) -> None:
@@ -174,3 +180,37 @@ def test_fingerprint_missing_health_flags_raises(pins: ToolchainPins) -> None:
     del clis["pi-cli"]["shim_runs"]
     with pytest.raises(FingerprintError, match="shim_runs"):
         Fingerprint.from_json(raw)
+
+
+def test_toolchain_free_host_fingerprint_has_empty_defaults() -> None:
+    fp = Fingerprint.from_json({"system": "Linux", "machine": "x86_64"})
+    assert fp.node_version is None and fp.clis == {} and fp.sections == {}
+
+
+def test_role_sections_are_kept_and_round_trip() -> None:
+    raw: RawFingerprint = {
+        "system": "Linux",
+        "machine": "x86_64",
+        "herdr": {"version": "0.9.1"},
+        "baseline": {"python3_version": "3.11.2"},
+    }
+    fp = Fingerprint.from_json(raw)
+    assert fp.sections == {"herdr": {"version": "0.9.1"}, "baseline": {"python3_version": "3.11.2"}}
+    out = fp.to_json()
+    assert out["herdr"] == {"version": "0.9.1"} and out["baseline"] == {"python3_version": "3.11.2"}
+
+
+def test_absent_sections_are_not_emitted(pins: ToolchainPins) -> None:
+    out = Fingerprint.from_json(good_raw(pins)).to_json()
+    assert list(out) == ["system", "machine", "platform", "node_version", "clis"]
+
+
+@pytest.mark.parametrize("section", SECTION_KEYS)
+def test_a_section_must_be_a_mapping(section: str) -> None:
+    with pytest.raises(FingerprintError, match=section):
+        Fingerprint.from_json({"system": "Linux", "machine": "x", section: "oops"})
+
+
+def test_unknown_top_level_keys_are_ignored() -> None:
+    fp = Fingerprint.from_json({"system": "Linux", "machine": "x", "surprise": 1})
+    assert fp.sections == {}

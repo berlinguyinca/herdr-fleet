@@ -18,11 +18,9 @@ from pathlib import Path
 
 import pytest
 
-from herdr_fleet.config import load_lock
-from herdr_fleet.inventory import build_extra_vars
 from herdr_fleet.runner import Mode, run_playbook
 from herdr_fleet.toolchain import platform_key
-from tests.helpers import LOCK_EXAMPLE
+from tests.helpers import example_extra_vars
 from tests.mirror import serve_files
 
 NODE_VERSION = "22.11.0"
@@ -94,7 +92,7 @@ LOCAL = {
 
 def apply(home: Path, mirror: Mirror, monkeypatch: pytest.MonkeyPatch, **extra: object) -> None:
     monkeypatch.setenv("HOME", str(home))
-    variables = build_extra_vars(load_lock(LOCK_EXAMPLE))
+    variables = example_extra_vars()
     variables["toolchain_node_dist_url"] = mirror.url
     variables["toolchain_node_sha256"] = mirror.sha256
     variables.update(extra)

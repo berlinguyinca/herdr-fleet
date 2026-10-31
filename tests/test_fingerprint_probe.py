@@ -8,11 +8,10 @@ import pytest
 
 from herdr_fleet.config import load_lock
 from herdr_fleet.fingerprint import Fingerprint, compare
-from herdr_fleet.inventory import build_extra_vars
 from herdr_fleet.report import parse_events
 from herdr_fleet.runner import Mode, run_playbook
 from herdr_fleet.toolchain import toolchain_pins
-from tests.helpers import LOCK_EXAMPLE
+from tests.helpers import LOCK_EXAMPLE, example_extra_vars
 
 LOCAL = {
     "all": {
@@ -29,7 +28,7 @@ LOCAL = {
 
 def fingerprint_in(home: Path, monkeypatch: pytest.MonkeyPatch) -> Fingerprint:
     monkeypatch.setenv("HOME", str(home))
-    result = run_playbook(LOCAL, build_extra_vars(load_lock(LOCK_EXAMPLE)), Mode.VERIFY)
+    result = run_playbook(LOCAL, example_extra_vars(), Mode.VERIFY)
     parsed = parse_events(result.stdout)
     assert not parsed.noise, parsed.noise
     return parsed.fingerprints["h"]
@@ -109,3 +108,20 @@ def test_healthy_shim_has_no_health_differences(
     install_pi(tmp_path, target=str(real))
     (tmp_path / ".bash_profile").write_text('export PATH="$HOME/.local/bin:$PATH"\n')
     assert health_fields(tmp_path, monkeypatch) == []
+
+
+def test_host_without_implemented_roles_reports_no_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    inventory = {"all": {"hosts": {"h": {**LOCAL["all"]["hosts"]["h"], "fleet_roles": []}}}}
+    result = run_playbook(inventory, example_extra_vars(), Mode.VERIFY)
+    assert parse_events(result.stdout).fingerprints == {}
+
+
+def test_toolchain_fingerprint_keeps_system_and_machine_from_the_base_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fp = fingerprint_in(tmp_path, monkeypatch)
+    assert fp.system in ("Linux", "Darwin") and fp.machine
+    assert fp.sections == {}

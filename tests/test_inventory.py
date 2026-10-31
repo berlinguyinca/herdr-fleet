@@ -6,16 +6,15 @@ import shlex
 
 import pytest
 
-from herdr_fleet.config import Host, load_config, load_lock
+from herdr_fleet.config import Host, load_config
 from herdr_fleet.inventory import (
     ADDRESS_PATTERN,
     HOST_NAME_PATTERN,
     USER_PATTERN,
     InventoryError,
-    build_extra_vars,
     build_inventory,
 )
-from tests.helpers import CONFIG_EXAMPLE, LOCK_EXAMPLE
+from tests.helpers import CONFIG_EXAMPLE, example_extra_vars
 
 
 def hosts_of(inventory: dict[str, object]) -> dict[str, dict[str, object]]:
@@ -77,7 +76,7 @@ def test_unknown_jump_host_is_an_error() -> None:
 
 
 def test_extra_vars_come_from_the_lock() -> None:
-    extra = build_extra_vars(load_lock(LOCK_EXAMPLE))
+    extra = example_extra_vars()
     assert extra["toolchain_node_version"] == "22.11.0"
     sha = extra["toolchain_node_sha256"]
     assert isinstance(sha, dict) and set(sha) == {"linux-x64", "darwin-arm64"}
@@ -93,7 +92,7 @@ def test_extra_vars_come_from_the_lock() -> None:
 
 
 def test_unused_lock_pins_are_not_passed() -> None:
-    extra = build_extra_vars(load_lock(LOCK_EXAMPLE))
+    extra = example_extra_vars()
     assert "gitleaks" not in str(extra) and "woodpecker" not in str(extra)
 
 

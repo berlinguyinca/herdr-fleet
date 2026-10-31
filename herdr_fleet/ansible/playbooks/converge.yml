@@ -19,6 +19,16 @@
             gather_subset: ["min", "env"]
           tags: [always]
 
+        # Every role adds its section to this one fact (set_fact + combine); the callback emits the
+        # fact on each change and the last event per host is the complete fingerprint.
+        - name: Fingerprint base
+          ansible.builtin.set_fact:
+            fleet_fingerprint:
+              system: "{{ ansible_facts.system }}"
+              machine: "{{ ansible_facts.architecture }}"
+          when: fleet_roles | length > 0
+          tags: [fingerprint]
+
         - name: Role toolchain
           ansible.builtin.include_role:
             name: toolchain

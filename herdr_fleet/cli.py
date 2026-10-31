@@ -11,6 +11,7 @@ from pathlib import Path
 
 from herdr_fleet.config import ConfigError, FleetConfig, FleetLock, load_config, load_lock
 from herdr_fleet.inventory import InventoryError, build_extra_vars, build_inventory
+from herdr_fleet.pins import fleet_pins
 from herdr_fleet.plan import NO_CHANGES_NOTICE, build_plan
 from herdr_fleet.render import render_hosts
 from herdr_fleet.report import (
@@ -23,7 +24,6 @@ from herdr_fleet.report import (
     parse_events,
 )
 from herdr_fleet.runner import Mode, RunResult, run_playbook
-from herdr_fleet.toolchain import toolchain_pins
 
 APPLY_LIMITS = (
     "NOT implemented yet (slice 4): staggering by host activity, session-awareness, rollback "
@@ -152,7 +152,7 @@ def _prepare(
     args: argparse.Namespace, lock: FleetLock, config: FleetConfig
 ) -> tuple[dict[str, object], dict[str, object]]:
     inventory = build_inventory(config.hosts, local=args.connection == "local", limit=args.limit)
-    return inventory, build_extra_vars(lock)
+    return inventory, build_extra_vars(lock, config)
 
 
 def _run_check(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -> int:
@@ -162,7 +162,7 @@ def _run_check(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -
         return _failure([str(exc)], args.json)
     result = run_playbook(inventory, extra_vars, Mode.CHECK)
     reports = build_reports(
-        parse_events(result.stdout), _host_roles(config, args.limit), toolchain_pins(lock)
+        parse_events(result.stdout), _host_roles(config, args.limit), fleet_pins(lock, config)
     )
     errors = _runner_errors(result, reports)
     code = EXIT_ERROR if errors else check_exit_code(reports)
@@ -201,7 +201,7 @@ def _apply_one(
     inventory, extra_vars = _prepare(
         argparse.Namespace(**{**vars(args), "limit": host}), lock, config
     )
-    pins, only = toolchain_pins(lock), {host: roles[host]}
+    pins, only = fleet_pins(lock, config), {host: roles[host]}
     applied = run_playbook(inventory, extra_vars, Mode.APPLY)
     (done,) = build_reports(parse_events(applied.stdout), only, pins, expect_fingerprint=False)
     errors = _runner_errors(applied, [done])
@@ -238,7 +238,7 @@ def _run_apply(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -
         if host_errors or report.status != "ok":
             break  # fail fast: later hosts are not touched
     untouched = {h: r for h, r in roles.items() if h not in {x.host for x in reports}}
-    reports.extend(build_reports(parse_events(""), untouched, toolchain_pins(lock)))
+    reports.extend(build_reports(parse_events(""), untouched, fleet_pins(lock, config)))
     code = EXIT_ERROR if errors else apply_exit_code(reports)
     total = sum(r.changed_count for r in reports)
     verdict = "passed" if code == EXIT_OK else "FAILED"

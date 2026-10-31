@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import difflib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import cast
 
 from herdr_fleet.fingerprint import Difference, Fingerprint, FingerprintError, compare
 from herdr_fleet.inventory import IMPLEMENTED_ROLES
-from herdr_fleet.toolchain import ToolchainPins
+from herdr_fleet.pins import FleetPins
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -21,6 +21,23 @@ _CHANGING = {"changed", "would_change"}
 _BROKEN = {"failed", "unreachable"}
 _MAX_DIFF_PARTS = 8
 NOT_ATTEMPTED = "not attempted: the run stopped or never reached this host"
+
+
+Comparator = Callable[[Fingerprint, FleetPins], list[Difference]]
+
+
+def _compare_toolchain(fp: Fingerprint, pins: FleetPins) -> list[Difference]:
+    return compare(fp, pins.toolchain)
+
+
+# One comparator per implemented role that reports a fingerprint section. Adding a role means
+# registering its comparator here and nothing else in this module.
+ROLE_COMPARATORS: Mapping[str, Comparator] = {"toolchain": _compare_toolchain}
+
+
+def expects_fingerprint(roles: Sequence[str]) -> bool:
+    """A host with any implemented role must report a fingerprint."""
+    return any(role in IMPLEMENTED_ROLES for role in roles)
 
 
 class RoleStatus(StrEnum):
@@ -185,8 +202,9 @@ def _host_report(
     roles: Sequence[str],
     events: Sequence[TaskEvent],
     fingerprint: Fingerprint | None,
-    pins: ToolchainPins,
+    pins: FleetPins,
     expect_fingerprint: bool,
+    comparators: Mapping[str, Comparator],
 ) -> HostReport:
     if not events and fingerprint is None:
         return HostReport(host, (), None, (NOT_ATTEMPTED,), attempted=False)
@@ -196,10 +214,11 @@ def _host_report(
         if role not in IMPLEMENTED_ROLES:
             results.append(RoleResult(role, RoleStatus.NOT_IMPLEMENTED))
             continue
-        differences = compare(fingerprint, pins) if fingerprint and role == "toolchain" else []
+        comparator = comparators.get(role)
+        differences = comparator(fingerprint, pins) if fingerprint and comparator else []
         results.append(_role_result(role, [e for e in events if e.role == role], differences))
     broken = errors or any(r.status is RoleStatus.FAILED for r in results)
-    if expect_fingerprint and fingerprint is None and not broken and "toolchain" in roles:
+    if expect_fingerprint and fingerprint is None and not broken and expects_fingerprint(roles):
         errors.append("no fingerprint was reported for this host")
     return HostReport(
         host,
@@ -213,9 +232,10 @@ def _host_report(
 def build_reports(
     parsed: ParsedEvents,
     host_roles: Mapping[str, Sequence[str]],
-    pins: ToolchainPins,
+    pins: FleetPins,
     *,
     expect_fingerprint: bool = True,
+    comparators: Mapping[str, Comparator] = ROLE_COMPARATORS,
 ) -> list[HostReport]:
     return [
         _host_report(
@@ -225,6 +245,7 @@ def build_reports(
             parsed.fingerprints.get(host),
             pins,
             expect_fingerprint,
+            comparators,
         )
         for host, roles in host_roles.items()
     ]

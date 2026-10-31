@@ -6,8 +6,9 @@ import re
 import shlex
 from collections.abc import Sequence
 
-from herdr_fleet.config import FleetLock, Host
-from herdr_fleet.toolchain import CLI_SPECS, toolchain_pins
+from herdr_fleet.config import FleetConfig, FleetLock, Host
+from herdr_fleet.pins import fleet_pins
+from herdr_fleet.toolchain import CLI_SPECS, ToolchainPins
 
 # Roles that have an Ansible implementation in this release; the rest are planned, not run.
 IMPLEMENTED_ROLES: tuple[str, ...] = ("toolchain",)
@@ -84,8 +85,7 @@ def build_inventory(hosts: Sequence[Host], *, local: bool, limit: str | None) ->
     return {"all": {"hosts": {h.name: _host_vars(h, by_name, local) for h in selected}}}
 
 
-def build_extra_vars(lock: FleetLock) -> JsonObject:
-    pins = toolchain_pins(lock)
+def _toolchain_vars(pins: ToolchainPins) -> JsonObject:
     return {
         "toolchain_node_version": pins.node_version,
         "toolchain_node_sha256": dict(pins.node_sha256),
@@ -99,3 +99,9 @@ def build_extra_vars(lock: FleetLock) -> JsonObject:
             for spec in CLI_SPECS
         ],
     }
+
+
+def build_extra_vars(lock: FleetLock, config: FleetConfig) -> JsonObject:
+    """Every role's Ansible variables; roles never read the lock or the config themselves."""
+    pins = fleet_pins(lock, config)
+    return {**_toolchain_vars(pins.toolchain)}

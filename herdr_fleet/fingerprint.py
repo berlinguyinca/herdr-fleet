@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 from herdr_fleet.toolchain import CLI_SPECS, ToolchainPins, platform_key
 
 JsonObject = Mapping[str, object]
+
+# Fingerprint keys owned by roles other than toolchain. Each role's tasks/fingerprint.yml adds its
+# own section; the role's module parses it (see ``herdr_fleet/<role>.py``).
+SECTION_KEYS: tuple[str, ...] = ("herdr", "herdr_engineering", "pi_runtime", "baseline")
 
 
 class FingerprintError(Exception):
@@ -45,8 +49,9 @@ class CliFingerprint:
 class Fingerprint:
     system: str
     machine: str
-    node_version: str | None
-    clis: Mapping[str, CliFingerprint]
+    node_version: str | None = None
+    clis: Mapping[str, CliFingerprint] = field(default_factory=dict)
+    sections: Mapping[str, JsonObject] = field(default_factory=dict)
 
     @property
     def platform(self) -> str | None:
@@ -54,15 +59,17 @@ class Fingerprint:
 
     @classmethod
     def from_json(cls, raw: JsonObject) -> Fingerprint:
+        clis = _optional_mapping(raw, "clis")
         return cls(
             system=_text(raw, "system"),
             machine=_text(raw, "machine"),
             node_version=_optional_text(raw, "node_version"),
-            clis={name: _cli(name, entry) for name, entry in _mapping(raw, "clis").items()},
+            clis={name: _cli(name, entry) for name, entry in clis.items()},
+            sections={key: _mapping(raw, key) for key in SECTION_KEYS if key in raw},
         )
 
     def to_json(self) -> dict[str, object]:
-        return {
+        out: dict[str, object] = {
             "system": self.system,
             "machine": self.machine,
             "platform": self.platform,
@@ -81,6 +88,8 @@ class Fingerprint:
                 for name, c in self.clis.items()
             },
         }
+        out.update({key: dict(section) for key, section in self.sections.items()})
+        return out
 
 
 def _text(raw: JsonObject, key: str) -> str:
@@ -102,6 +111,10 @@ def _mapping(raw: JsonObject, key: str) -> Mapping[str, JsonObject]:
     if not isinstance(value, dict):
         raise FingerprintError(f"fingerprint: {key}: expected a mapping, got {value!r}")
     return cast(Mapping[str, JsonObject], value)
+
+
+def _optional_mapping(raw: JsonObject, key: str) -> Mapping[str, JsonObject]:
+    return _mapping(raw, key) if key in raw else {}
 
 
 def _cli(name: str, entry: JsonObject) -> CliFingerprint:
