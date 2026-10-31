@@ -58,7 +58,7 @@ its pins in `fleet.lock`. Roles are idempotent and support `--check`.
 
 | Role | Provides |
 |---|---|
-| `baseline` | OS packages, state/config directories, linger, Tailscale presence (informational). The only role that may use root (package install and linger); probes and check mode never do. Without usable root it fails naming the exact `sudo` command to run once |
+| `baseline` | OS packages, state/config directories, linger, Tailscale presence (informational). The only role that may use root (package-index refresh, package install and linger; each is checked beforehand with `sudo -n -l <command>`); probes and check mode never do. Without usable root it fails naming the exact `sudo` command to run once |
 | `toolchain` | Node and global CLIs in a managed prefix, independent of any user's nvm default |
 | `herdr` | pinned herdr release binary, sha256-verified before it is installed to `~/.local/bin/herdr`; never starts, restarts or updates a running server |
 | `herdr-engineering` | the `herdr-eng` venv from a pinned commit (staged by the vendored release stager), shim, `fabric.env`, fabric agent unit, build gate |

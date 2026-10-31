@@ -213,8 +213,9 @@ attestation the coordinator relies on).
 
 ### 2.6 Root, linger and the `baseline` privilege rule
 
-- `baseline` is the only role with `become`. Privileged tasks are exactly: Debian package install and
-  `loginctl enable-linger <user>`. Both are preceded by read-only unprivileged probes, so check mode
+- `baseline` is the only role with `become`. Privileged tasks are exactly: `apt-get update`, Debian package install and
+  `loginctl enable-linger <user>`. Each is preceded by a read-only `sudo -n -l <that command>` probe
+  (not `sudo -n true`, which a command-restricted sudoers refuses although the real command works), so check mode
   and a fully converged host never need root or a password.
 - Missing packages under check mode produce a pending change naming the packages
   (`install packages: git, xz-utils`). Under apply without usable sudo the role fails with

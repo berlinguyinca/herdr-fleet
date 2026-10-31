@@ -61,7 +61,7 @@ script or timer (spec 0001, "Extending the fleet").
     idempotent, drift, failure) against real downloads. See [testing.md](testing.md).
 
 **Privilege rule.** Roles run as the connecting user and write only under `$HOME`. `baseline` is
-the only role with `become`, and only for package installation and linger; every probe and check
+the only role with `become`, and only for the package-index refresh (`apt-get update`), package installation and linger; every probe and check
 mode runs unprivileged. A new role that needs root must go through `baseline`, not add `become`.
 A test scans the other roles for it.
 

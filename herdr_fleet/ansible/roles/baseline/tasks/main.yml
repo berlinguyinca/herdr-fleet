@@ -39,15 +39,32 @@
   ansible.builtin.set_fact:
     baseline_is_root: "{{ ansible_facts.user_uid | int == 0 }}"
 
-- name: can privileged commands run without a password
+# `sudo -n -l CMD` answers whether sudo would run exactly CMD without a password, and runs nothing.
+# `sudo -n true` would be wrong: a sudoers that allows only apt-get and loginctl refuses it although
+# the real commands work. The three commands below are the only ones this role escalates for.
+- name: can apt-get update run without a password
   ansible.builtin.command:
-    argv: ["{{ baseline_sudo }}", -n, "true"]
-  register: baseline_sudo_probe
+    argv: ["{{ baseline_sudo }}", -n, -l, --, apt-get, update, -q]
+  register: baseline_sudo_probe_apt_update
   failed_when: false
   changed_when: false
-  when: >-
-    not ansible_check_mode and not baseline_is_root
-    and (baseline_apt_names | length > 0 or baseline_wants_linger | bool)
+  when: not ansible_check_mode and not baseline_is_root and baseline_apt_names | length > 0
+
+- name: can apt-get install run without a password
+  ansible.builtin.command:
+    argv: "{{ [baseline_sudo, '-n', '-l', '--', 'apt-get', 'install', '-y', '--no-install-recommends', '--'] + baseline_apt_names }}"
+  register: baseline_sudo_probe_apt_install
+  failed_when: false
+  changed_when: false
+  when: not ansible_check_mode and not baseline_is_root and baseline_apt_names | length > 0
+
+- name: can loginctl enable-linger run without a password
+  ansible.builtin.command:
+    argv: ["{{ baseline_sudo }}", -n, -l, --, loginctl, enable-linger, "{{ baseline_user }}"]
+  register: baseline_sudo_probe_linger
+  failed_when: false
+  changed_when: false
+  when: not ansible_check_mode and not baseline_is_root and baseline_wants_linger | bool
 
 - name: root is needed to install packages
   ansible.builtin.fail:
@@ -55,8 +72,8 @@
       baseline needs root to install: {{ baseline_apt_names | join(' ') }};
       run `sudo apt-get install -y {{ baseline_apt_names | join(' ') }}` once, then re-run apply
   when: >-
-    not ansible_check_mode and baseline_apt_names | length > 0
-    and not baseline_is_root and baseline_sudo_probe.rc != 0
+    not ansible_check_mode and baseline_apt_names | length > 0 and not baseline_is_root
+    and (baseline_sudo_probe_apt_update.rc != 0 or baseline_sudo_probe_apt_install.rc != 0)
 
 - name: root is needed to enable linger
   ansible.builtin.fail:
@@ -65,7 +82,7 @@
       run `sudo loginctl enable-linger {{ baseline_user }}` once, then re-run apply
   when: >-
     not ansible_check_mode and baseline_wants_linger | bool
-    and not baseline_is_root and baseline_sudo_probe.rc != 0
+    and not baseline_is_root and baseline_sudo_probe_linger.rc != 0
 
 - name: refresh the apt package index
   ansible.builtin.command:

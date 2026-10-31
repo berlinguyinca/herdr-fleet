@@ -9,6 +9,7 @@ path itself is proven inside a real container (tests/containers/test_baseline_sc
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -293,3 +294,32 @@ def test_apt_and_dpkg_calls_end_option_parsing_before_the_package_names() -> Non
     assert "'--'" in install and install.index("'--'") < install.index("+ baseline_apt_names")
     dpkg = argvs["installed apt packages"]
     assert dpkg[-2:] == ["--", "{{ item }}"]
+
+
+def probe_argvs() -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for task in tasks_of(ROLE / "tasks" / "main.yml"):
+        command = task.get("ansible.builtin.command")
+        if task.get("register", "").startswith("baseline_sudo_probe") and command:
+            argv = command["argv"]
+            if isinstance(argv, str):  # a Jinja list expression: read its quoted literals
+                argv = re.findall(r"'([^']*)'", argv)
+                argv.insert(0, "sudo")
+            out[str(task["register"])] = argv
+    return out
+
+
+def test_the_privilege_probes_ask_sudo_about_the_commands_that_will_really_run() -> None:
+    # `sudo -n true` fails under a sudoers that allows only apt-get and loginctl although the real
+    # become would work; `sudo -n -l CMD` asks exactly about the command and never runs it.
+    argvs = probe_argvs()
+    assert set(argvs) == {
+        "baseline_sudo_probe_apt_update",
+        "baseline_sudo_probe_apt_install",
+        "baseline_sudo_probe_linger",
+    }
+    for argv in argvs.values():
+        assert argv[1:4] == ["-n", "-l", "--"] and "true" not in argv
+    assert argvs["baseline_sudo_probe_apt_update"][4:6] == ["apt-get", "update"]
+    assert argvs["baseline_sudo_probe_apt_install"][4:6] == ["apt-get", "install"]
+    assert argvs["baseline_sudo_probe_linger"][4:6] == ["loginctl", "enable-linger"]
