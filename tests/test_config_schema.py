@@ -207,10 +207,24 @@ def test_config_without_new_optional_keys_loads(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "package",
     [
-        "Vim", "-x", "a b", "a;b", "", "$(id)", "a/b", ".hidden", "+x",
+        "Vim",
+        "-x",
+        "a b",
+        "a;b",
+        "",
+        "$(id)",
+        "a/b",
+        ".hidden",
+        "+x",
         "openssh-server-",  # apt reads a trailing '-' as REMOVE
         "openssh-server+",  # ... and a trailing '+' as an explicit install
-        "g++", "vim\n", "vim\nrm", "--purge", "vim=1.0", "vim:amd64", "vim/stable",
+        "g++",
+        "vim\n",
+        "vim\nrm",
+        "--purge",
+        "vim=1.0",
+        "vim:amd64",
+        "vim/stable",
     ],
 )
 def test_bad_extra_package_names_rejected(tmp_path: Path, package: str) -> None:
@@ -272,7 +286,7 @@ def test_herdr_engineering_does_not_need_toolchain(tmp_path: Path) -> None:
         "https://gw.example.com/{%25x%25}",
         "https://user:pw@gw.example.com",
         "https://gw.example.com/a@b",
-        "https://gw.example.com/\"x",
+        'https://gw.example.com/"x',
         "https://gw.example.com/'x",
         "https://gw.example.com/a\\b",
         "https://gw.example.com/%41",

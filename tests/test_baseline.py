@@ -191,8 +191,9 @@ def test_the_package_pattern_in_the_schema_is_the_one_the_pins_enforce() -> None
     from herdr_fleet.baseline import PACKAGE_PATTERN
 
     schema = json.loads(
-        (Path(__file__).resolve().parent.parent / "herdr_fleet/schemas/fleet-config.schema.json")
-        .read_text()
+        (
+            Path(__file__).resolve().parent.parent / "herdr_fleet/schemas/fleet-config.schema.json"
+        ).read_text()
     )
     assert schema["properties"]["baseline"]["properties"]["extra_packages"]["items"]["pattern"] == (
         PACKAGE_PATTERN
