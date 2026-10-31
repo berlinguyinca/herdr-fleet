@@ -73,3 +73,32 @@ covered), and macOS paths (launchd, Homebrew probes). Their logic is covered by 
 tests. Before a lock is rolled to the fleet, run `herdr-fleet plan --check` then `apply` once on
 one real Debian host with a systemd user manager and once on a real Mac and confirm the second
 `plan --check` exits 0.
+
+## Test doubles that remain, and what they are
+
+The rule is no mocks, stubs or fakes. These are the exceptions, stated precisely.
+
+Replaced by the real thing (slice 3 review):
+
+- `npm` in `tests/test_stage_release.py` and `tests/test_pi_runtime_apply.py` is the host's real
+  `npm` and `node` (symlinked into the managed toolchain `bin` for the role test, no wrapper). It
+  runs a real `npm ci` on a tiny package (`tests/real_npm.py`) whose only dependency is a `file:`
+  directory in the same repository and whose `package-lock.json` was written by real npm, so no
+  registry is needed. A real `prepare` lifecycle script logs the `PATH` npm ran with. npm's HOME and
+  cache are throwaway. Without node and npm on `PATH` these tests skip.
+
+Still doubles, because the real thing needs the internet or cannot run on the host:
+
+- `FAKE_HERDR` in `tests/test_herdr_apply.py` is a shell script with canned answers to `--version`
+  and `status`, served by a local HTTP mirror. It is a stub: it proves the role's download, sha256
+  check, install, mode, symlink handling and drift messages, not that the real herdr runs. The real
+  release binary is exercised only in `tests/containers/test_installer_scenarios.py`, never on the
+  host.
+- `FAKE_NODE` and `FAKE_NPM` in `tests/test_toolchain_apply.py` are canned scripts inside a node
+  tarball built on the fly: the toolchain role downloads Node and runs `npm install --global
+  <pkg>@<version>` from a registry, which cannot be done offline. They prove the role's
+  verification, extraction, shims and idempotence. The real Node 22.23.2 and real global CLIs are
+  covered by the container scenarios.
+- The `#!/bin/sh` one-liners in `tests/test_fingerprint_probe.py` and
+  `tests/test_cli_check_inprocess.py` are fixtures standing in for binaries on `PATH` whose only
+  observable behaviour is their exit status or a version line.

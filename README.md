@@ -56,6 +56,15 @@ command line.
 pending change without downloading the archive, so a wrong `sha256` in `fleet.lock` or an
 unreachable mirror only surfaces on `apply` (the download is checksum-verified there).
 
+What "never touches the network" and "changes nothing" mean exactly: check mode downloads, clones
+and installs nothing and writes no managed file, directory or setting on the host. It does run
+read-only probes on the host: file reads and hashes, `--version` of installed binaries, `dpkg-query`,
+`systemctl --user show`, and for the staged releases the local `git rev-parse HEAD` and
+`git status --porcelain --untracked-files=all` (run with `GIT_OPTIONAL_LOCKS=0` so they take no
+`index.lock`; a test shows the index file is byte-identical afterwards) plus
+`stage_release.py --describe`, which is offline. A pending change is reported from those reads
+alone.
+
 Each host also reports a fingerprint (os/arch, managed Node version, CLI versions, shim path,
 what `command -v pi` resolves to in a clean-environment bash login shell (`bash -lc`, no TTY;
 only a marker line of its output is read, so profile banners cannot cause drift), and whether
@@ -90,7 +99,8 @@ managed bin first on `PATH` and then exec the real CLI. Changing the shell's def
   signals Pi, never touches missions and never deletes an older release; activation belongs to
   the rollout coordinator. Rollout revisions must equal `repos.pi-engineering`.
 - **`baseline`**: required packages (`git curl ca-certificates python3 python3-venv xz-utils`) plus
-  `baseline.extra_packages` from the config, the state/config directories, linger and an
+  `baseline.extra_packages` from the config (Debian and Ubuntu only: on macOS the role installs
+  nothing, so `extra_packages` are ignored there), the state/config directories, linger and an
   informational Tailscale probe. **It is the only role that may use root**, and only for package
   installation and enabling linger. Probes and `plan --check` never need root or a password. When
   root is needed and unavailable, apply fails with the exact command to run once, for example

@@ -19,8 +19,9 @@ import pytest
 
 from herdr_fleet import stage_release
 from herdr_fleet.stage_release import describe, run, stage
+from tests.real_npm import PI_FILES, isolate_npm, real_node_and_npm, real_npm_dir
 
-PI_PACKAGE = {"name": "pi-engineering-runtime", "version": "1.0.0"}
+PI_PACKAGE = {"name": "pi-engineering-runtime", "version": "1.0.0"}  # a bare package.json
 BACKEND = """\
 import base64, hashlib, zipfile
 
@@ -54,11 +55,6 @@ requires = []
 build-backend = "backend"
 backend-path = ["."]
 """
-FAKE_NPM = """#!/bin/sh
-# usage: npm ci --include=dev --no-audit --no-fund (cwd = the release)
-mkdir -p node_modules/dep
-echo "$PWD" >> "$NPM_LOG"
-"""
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -80,6 +76,7 @@ def make_repo(path: Path, files: dict[str, str]) -> tuple[str, str]:
     path.mkdir(parents=True)
     git(path, "init", "-q")
     for name, text in files.items():
+        (path / name).parent.mkdir(parents=True, exist_ok=True)
         (path / name).write_text(text)
     git(path, "add", "-A")
     git(path, "commit", "-q", "-m", "release")
@@ -89,7 +86,7 @@ def make_repo(path: Path, files: dict[str, str]) -> tuple[str, str]:
 
 @pytest.fixture
 def pi_repo(tmp_path: Path) -> tuple[str, str]:
-    return make_repo(tmp_path / "pi-src", {"package.json": json.dumps(PI_PACKAGE)})
+    return make_repo(tmp_path / "pi-src", PI_FILES)
 
 
 @pytest.fixture
@@ -106,13 +103,10 @@ def herdr_repo(tmp_path: Path) -> tuple[str, str]:
 
 @pytest.fixture
 def npm_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    directory = tmp_path / "tools"
-    directory.mkdir()
-    npm = directory / "npm"
-    npm.write_text(FAKE_NPM)
-    npm.chmod(0o755)
-    monkeypatch.setenv("NPM_LOG", str(tmp_path / "npm.log"))
-    return directory
+    """The directory of the host's real npm; npm's own HOME and cache are throwaway."""
+    isolate_npm(monkeypatch, tmp_path / "npm-home", tmp_path / "npm.log")
+    real_node_and_npm()
+    return real_npm_dir()
 
 
 def root_of(home: Path, kind: str) -> Path:

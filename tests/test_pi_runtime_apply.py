@@ -1,14 +1,16 @@
 """Real ``apply``, ``check`` and ``verify`` of the pi-runtime role in a throwaway HOME.
 
-The Pi release comes from a real git repository at a ``file://`` URL. ``npm`` is a real script
-placed in the throwaway HOME's managed toolchain ``bin`` directory (as the toolchain role would
-link it), so the tests prove the role runs the toolchain's npm. Pi sessions are stood in for by a
-real long-running process and real session/mission files, which must come through untouched.
+The Pi release comes from a real git repository at a ``file://`` URL. ``npm`` is the host's real npm
+and node, linked into the throwaway HOME's managed toolchain ``bin`` directory (as the toolchain
+role would link them) and run by a real ``npm ci`` on a tiny offline package (tests/real_npm.py).
+Pi sessions are stood in for by a real long-running process and real session/mission files,
+which must come through untouched.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -23,20 +25,7 @@ from herdr_fleet.report import ParsedEvents, parse_events
 from herdr_fleet.runner import Mode, run_playbook
 from tests.eng_repo import Source, make_source
 from tests.helpers import example_extra_vars
-
-PACKAGE = {"name": "pi-engineering-runtime", "version": "1.0.0", "private": True}
-PI_FILES = {
-    "package.json": json.dumps(PACKAGE),
-    "README": "pi\n",
-    ".gitignore": "node_modules/\n",
-}
-
-# What `npm ci --include=dev` leaves behind, plus a log line saying which npm ran and with which
-# PATH prefix, so a test can see the managed toolchain was used.
-NPM = """#!/bin/sh
-mkdir -p node_modules/dep
-printf '%s|%s|%s\\n' "$0" "$PWD" "${PATH%%:*}" >> "$NPM_LOG"
-"""
+from tests.real_npm import PI_FILES, isolate_npm, link_real_npm
 
 LOCAL = {
     "all": {
@@ -58,15 +47,10 @@ def source(tmp_path_factory: pytest.TempPathFactory) -> Source:
 
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A throwaway HOME whose managed toolchain has an npm."""
+    """A throwaway HOME whose managed toolchain has the host's real npm and node linked in."""
     directory = tmp_path / "home"
-    toolchain_bin = directory / ".local/share/herdr-fleet/toolchain/bin"
-    toolchain_bin.mkdir(parents=True)
-    npm = toolchain_bin / "npm"
-    npm.write_text(NPM)
-    npm.chmod(0o755)
-    monkeypatch.setenv("NPM_LOG", str(tmp_path / "npm.log"))
-    monkeypatch.setenv("HOME", str(directory))
+    isolate_npm(monkeypatch, directory, tmp_path / "npm.log")
+    link_real_npm(directory / ".local/share/herdr-fleet/toolchain/bin")
     return directory
 
 
@@ -140,9 +124,13 @@ def test_apply_stages_registers_and_verify_is_clean(home: Path, source: Source) 
 def test_npm_ci_runs_with_the_managed_toolchain_first_on_path(home: Path, source: Source) -> None:
     converge(home, source, Mode.APPLY)
     toolchain_bin = str(home / ".local/share/herdr-fleet/toolchain/bin")
-    ((script, cwd, first),) = npm_calls(home)
-    assert script == f"{toolchain_bin}/npm" and first == toolchain_bin
+    ((path, cwd),) = npm_calls(home)  # written by the package's real `prepare` script
+    entries = path.split(":")
+    host_npm_dir = str(Path(shutil.which("npm") or "").parent)
+    assert toolchain_bin in entries
+    assert host_npm_dir not in entries or entries.index(toolchain_bin) < entries.index(host_npm_dir)
     assert cwd == str(releases(home) / source.revision)
+    assert (releases(home) / source.revision / "node_modules/dep/package.json").is_file()
 
 
 def test_second_apply_changes_nothing_and_runs_no_npm(home: Path, source: Source) -> None:
@@ -180,7 +168,7 @@ def test_unrelated_pi_settings_and_packages_survive(home: Path, source: Source) 
 def test_a_new_pin_stages_a_second_release_and_keeps_the_first(home: Path, source: Source) -> None:
     converge(home, source, Mode.APPLY)
     old_release = releases(home) / source.revision
-    marker = old_release / "node_modules/dep/keep"
+    marker = old_release / "node_modules/keep"
     marker.write_text("mine")
     newer = source.commit({"NEWS": "second\n"})
     pending = converge(home, newer, Mode.CHECK)

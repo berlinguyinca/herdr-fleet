@@ -156,8 +156,9 @@ Existing herdr-fleet model (HF):
 
 ### 2.3 Check-mode and apply rules for every new role
 
-1. No network in check mode: `get_url`, `git`, `pip`, `npm`, `apt` are never invoked under
-   `ansible_check_mode` (slice-2 precedent).
+1. No network in check mode: `get_url`, `git clone/fetch`, `pip`, `npm`, `apt` are never invoked under
+   `ansible_check_mode` (slice-2 precedent). Local read-only `git rev-parse`/`git status` of an
+   already staged release does run, with `GIT_OPTIONAL_LOCKS=0`; it neither fetches nor locks.
 2. Read-only probes use `check_mode: false` and never write: `stat` with checksum, `slurp`,
    running the installed binary's `--version`, `stage-release.py --describe` (offline by design),
    `dpkg-query`, `systemctl --user show/is-active`, `tailscale status`.
@@ -383,7 +384,7 @@ Installs/ensures:
 - Required packages (Debian/Ubuntu), fixed list in role defaults, justified by the other roles:
   `git curl ca-certificates python3 python3-venv xz-utils` (xz for the Node archive,
   `HF:herdr_fleet/ansible/roles/toolchain/tasks/main.yml`; git/venv/python for herdr-engineering).
-  Plus `baseline.extra_packages` from config (the old role's vim/mc/btop go in the example config,
+  Plus `baseline.extra_packages` from config (Debian/Ubuntu only; ignored on macOS) (the old role's vim/mc/btop go in the example config,
   not the defaults; **OPEN QUESTION 7**, recommended default as stated).
 - Directories under `$HOME` (no root): `~/.config/herdr-engineering` (0700),
   `~/.local/share/herdr-engineering` (0700), `~/.local/share/herdr-engineering/state` and

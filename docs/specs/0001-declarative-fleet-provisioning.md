@@ -29,7 +29,7 @@ Exact pins for everything the fleet runs. No ranges, no `main`.
 |---|---|
 | Node | exact version + per-platform checksum |
 | herdr | exact version + per-platform checksum |
-| herdr-engineering, pi-engineering, autospec | full commit ID |
+| herdr-engineering, pi-engineering, autospec | full commit ID. The commit pins the source only: the Python dependencies pip resolves for herdr-engineering are not pinned or hashed (see `docs/follow-ups/python-dependencies-are-not-pinned.md`); the npm dependencies of pi-engineering are pinned by its `package-lock.json` through `npm ci` |
 | global CLIs (Pi CLI, Codex, gitleaks, woodpecker-cli) | exact version |
 | container images (Woodpecker server/agent, control plane, fabric stack) | image digest |
 | herdr-fleet itself | exact version; the controller re-execs from the pin |
@@ -58,7 +58,7 @@ its pins in `fleet.lock`. Roles are idempotent and support `--check`.
 
 | Role | Provides |
 |---|---|
-| `baseline` | OS packages, state/config directories, linger, Tailscale presence (informational). The only role that may use root (package-index refresh, package install and linger; each is checked beforehand with `sudo -n -l <command>`); probes and check mode never do. Without usable root it fails naming the exact `sudo` command to run once |
+| `baseline` | OS packages (Debian/Ubuntu only; on macOS nothing is installed and `baseline.extra_packages` are ignored), state/config directories, linger, Tailscale presence (informational). The only role that may use root (package-index refresh, package install and linger; each is checked beforehand with `sudo -n -l <command>`); probes and check mode never do. Without usable root it fails naming the exact `sudo` command to run once |
 | `toolchain` | Node and global CLIs in a managed prefix, independent of any user's nvm default |
 | `herdr` | pinned herdr release binary, sha256-verified before it is installed to `~/.local/bin/herdr`; never starts, restarts or updates a running server |
 | `herdr-engineering` | the `herdr-eng` venv from a pinned commit (staged by the vendored release stager), shim, `fabric.env`, fabric agent unit, build gate |
@@ -172,7 +172,9 @@ vault, enrolls the controller, and runs `plan`.
 
 1. Schemas (`fleet.lock`, `fleet-config`), loader, `plan` skeleton, CI. **Done.**
 2. `toolchain` role + fingerprint + check-mode drift (fixes the Node/Pi-CLI drift). **Done.**
-3. `herdr`, `herdr-engineering`, `pi-runtime`, `baseline` roles with real installers and checksums. **Done.**
+3. `herdr`, `herdr-engineering`, `pi-runtime`, `baseline` roles with real installers. Node and herdr
+   are checksum-verified; npm dependencies are locked by `package-lock.json`; the Python dependencies
+   of herdr-engineering are not pinned (a documented gap). **Done.**
    Not covered by automated tests, hence a manual canary on one real host before the lock is rolled
    out: systemd user units and linger, and macOS.
 4. Staggered, session-aware `apply`; verify; rollback; notifications.
