@@ -63,6 +63,22 @@ def _environment(root: Path) -> dict[str, str]:
 EXIT_COMMAND_NOT_RUNNABLE = 127
 
 
+def _unsafe(value: object) -> object:
+    """Mark every string as data: ansible would otherwise evaluate ``{{ ... }}`` inside it.
+
+    ``-e @file.json`` values are templated lazily, so a gateway URL such as
+    ``{{ lookup('pipe', ...) }}`` would run on the operator's machine. ansible's JSON loader turns
+    the ``__ansible_unsafe`` wrapper into an unsafe (never templated) string.
+    """
+    if isinstance(value, str):
+        return {"__ansible_unsafe": value}
+    if isinstance(value, dict):
+        return {key: _unsafe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_unsafe(item) for item in value]
+    return value
+
+
 def run_playbook(
     inventory: JsonObject,
     extra_vars: JsonObject,
@@ -77,7 +93,7 @@ def run_playbook(
         inventory_file.write_text(yaml.safe_dump(inventory))
         # Only apply stops at the first failure; check and verify must report every host.
         run_vars = {**extra_vars, "fleet_fail_fast": mode is Mode.APPLY}
-        vars_file.write_text(json.dumps(run_vars))
+        vars_file.write_text(json.dumps(_unsafe(run_vars)))
         command = [
             str(executable or ansible_playbook_executable()),
             "-i",

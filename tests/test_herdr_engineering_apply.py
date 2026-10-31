@@ -442,3 +442,16 @@ def test_a_missing_gateway_url_fails_naming_the_remedy(
     result = run_playbook(LOCAL, variables(source, herdr_engineering_gateway_url=None), Mode.APPLY)
     assert result.returncode != 0
     assert "services.gateway.url" in result.stdout
+
+
+# --- operator strings are data, never templates ------------------------------------------------
+
+
+def test_a_jinja_lookup_in_the_gateway_url_is_written_literally_and_never_runs(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = tmp_path / "INJECTED"
+    evil = "https://x.example.com/{{ lookup('pipe', 'touch " + str(marker) + "') }}"
+    converge(tmp_path, source, Mode.APPLY, monkeypatch, herdr_engineering_gateway_url=evil)
+    assert not marker.exists(), "an extra-var string was evaluated as a template"
+    assert f"HERDR_ENGINEERING_FABRIC_URL={evil}\n" in env_file(tmp_path).read_text()
