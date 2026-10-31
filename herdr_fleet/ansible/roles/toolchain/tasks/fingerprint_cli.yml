@@ -1,0 +1,67 @@
+---
+- name: installed {{ cli.name }}
+  ansible.builtin.slurp:
+    src: "{{ toolchain_prefix }}/lib/node_modules/{{ cli.package }}/package.json"
+  register: fp_pkg
+  failed_when: false
+  check_mode: false
+
+- name: shim for {{ cli.command }}
+  ansible.builtin.stat:
+    path: "{{ toolchain_shim_dir }}/{{ cli.command }}"
+  register: fp_shim
+
+# The package can be right while the shim cannot start it (dangling bin link, broken node).
+- name: managed bin for {{ cli.command }}
+  ansible.builtin.stat:
+    path: "{{ toolchain_prefix }}/bin/{{ cli.command }}"
+    follow: true
+  register: fp_target
+
+- name: run the shim for {{ cli.command }}
+  ansible.builtin.command:
+    argv:
+      - "{{ toolchain_shim_dir }}/{{ cli.command }}"
+      - --version
+  environment:
+    PATH: "{{ toolchain_prefix }}/bin:/usr/local/bin:/usr/bin:/bin"
+  register: fp_runs
+  when: fp_shim.stat.exists and fp_target.stat.exists
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+# A bash login shell (bash -l, no TTY) with a clean environment: what a service or a job would
+# see. Profile scripts may print anything, so the answer is the RESOLVED= marker line only.
+- name: where a bash login shell finds {{ cli.command }}
+  ansible.builtin.command:
+    argv:
+      - env
+      - -i
+      - "HOME={{ toolchain_home }}"
+      - PATH=/usr/local/bin:/usr/bin:/bin
+      - bash
+      - -lc
+      - "printf 'RESOLVED=%s\\n' \"$(command -v {{ cli.command | quote }})\""
+  register: fp_resolved
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: read the marker line for {{ cli.command }}
+  ansible.builtin.set_fact:
+    fp_resolved_path: >-
+      {{ (fp_resolved.stdout_lines | default([]) | select('match', '^RESOLVED=') | list | last
+      | default('RESOLVED=')) | regex_replace('^RESOLVED=', '') | trim }}
+
+- name: add {{ cli.name }}
+  ansible.builtin.set_fact:
+    fp_clis: >-
+      {{ fp_clis | combine({cli.name: {
+      'version': ((fp_pkg.content | b64decode | from_json).version if fp_pkg.content is defined else None),
+      'shim_path': toolchain_shim_dir ~ '/' ~ cli.command,
+      'shim_present': fp_shim.stat.exists,
+      'resolved_path': (fp_resolved_path if fp_resolved_path | length > 0 else None),
+      'target_path': toolchain_prefix ~ '/bin/' ~ cli.command,
+      'target_present': fp_target.stat.exists,
+      'shim_runs': (fp_runs.rc | default(1)) == 0}}) }}

@@ -1,0 +1,27 @@
+---
+- name: managed node version
+  ansible.builtin.command:
+    argv: ["{{ toolchain_prefix }}/bin/node", "--version"]
+  register: fp_node
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: start the CLI table
+  ansible.builtin.set_fact:
+    fp_clis: {}
+
+- name: each CLI
+  ansible.builtin.include_tasks: fingerprint_cli.yml
+  loop: "{{ toolchain_clis }}"
+  loop_control:
+    loop_var: cli
+    label: "{{ cli.name }}"
+
+- name: record
+  ansible.builtin.set_fact:
+    fleet_fingerprint:
+      system: "{{ ansible_facts.system }}"
+      machine: "{{ ansible_facts.architecture }}"
+      node_version: "{{ fp_node.stdout | trim | regex_replace('^v', '') if fp_node.rc == 0 else None }}"
+      clis: "{{ fp_clis }}"

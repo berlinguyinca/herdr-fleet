@@ -141,3 +141,50 @@ def test_ci_server_role_with_external_url_rejected(tmp_path: Path) -> None:
     doc = example_config()
     _services(doc)["ci_server"]["external_url"] = "https://ci.example.com"  # type: ignore[index]
     _expect_error(doc, tmp_path, "ci-server", "external_url", "either")
+
+
+BAD_ADDRESSES = [
+    "x -o ProxyCommand=touch${IFS}/tmp/pwned",
+    "-oProxyCommand=id",
+    "-host",
+    "host;id",
+    "host name",
+    "$(id)",
+    "a@b",
+]
+BAD_USERS = ["-oProxyCommand=id", "Root", "a b", "a;b", "", "u@h", "$(id)"]
+
+
+@pytest.mark.parametrize("address", BAD_ADDRESSES)
+def test_malicious_address_rejected(tmp_path: Path, address: str) -> None:
+    doc = example_config()
+    _hosts(doc)["host-a"]["connection"]["address"] = address  # type: ignore[index]
+    _expect_error(doc, tmp_path, "hosts.host-a.connection.address")
+
+
+@pytest.mark.parametrize("user", BAD_USERS)
+def test_malicious_user_rejected(tmp_path: Path, user: str) -> None:
+    doc = example_config()
+    _hosts(doc)["host-a"]["connection"]["user"] = user  # type: ignore[index]
+    _expect_error(doc, tmp_path, "hosts.host-a.connection.user")
+
+
+@pytest.mark.parametrize("jump", ["-oProxyCommand=id", "a b", "a;b"])
+def test_malicious_jump_host_rejected(tmp_path: Path, jump: str) -> None:
+    doc = example_config()
+    _hosts(doc)["host-b"]["connection"]["jump_host"] = jump  # type: ignore[index]
+    _expect_error(doc, tmp_path, "hosts.host-b.connection.jump_host")
+
+
+@pytest.mark.parametrize("address", ["host-a.example.com", "10.0.0.7", "[fe80::1]", "h"])
+def test_good_addresses_accepted(tmp_path: Path, address: str) -> None:
+    doc = example_config()
+    _hosts(doc)["host-a"]["connection"]["address"] = address  # type: ignore[index]
+    path = write_yaml(tmp_path / "fleet-config.yaml", doc)
+    assert load_config(path).hosts[0].address == address
+
+
+def test_chained_jump_hosts_are_rejected(tmp_path: Path) -> None:
+    doc = example_config()
+    _hosts(doc)["host-a"]["connection"]["jump_host"] = "host-b"  # type: ignore[index]
+    _expect_error(doc, tmp_path, "hosts.host-a.connection.jump_host", "chain")

@@ -1,0 +1,29 @@
+# Test fixture for the container scenarios.
+# REAL (used by the toolchain role): node version + sha256 (from
+# https://nodejs.org/dist/v22.23.2/SHASUMS256.txt) and the npm CLI versions (npm view).
+# PLACEHOLDER (schema-required, not used by any role in this slice): herdr, repos, images,
+# herdr_fleet, and the gitleaks / woodpecker-cli pins.
+version: 1
+node:
+  version: 22.23.2
+  sha256:
+    linux-x64: "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"
+    linux-arm64: "fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8"
+    darwin-x64: "58e99022c2ff89395576cc7fd4d98cea24bb68081475d5f88b801ee8729fb026"
+    darwin-arm64: "61130f394c1630d211dd50aecc4353d379480f36d3ac913cd85dbba1aed585c6"
+herdr:  # placeholder
+  version: 0.5.0
+  sha256:
+    linux-x64: "0000000000000000000000000000000000000000000000000000000000000003"
+repos:  # placeholder
+  herdr-engineering: "1111111111111111111111111111111111111111"
+  pi-engineering: "2222222222222222222222222222222222222222"
+  autospec: "3333333333333333333333333333333333333333"
+clis:
+  pi-cli: 1.4.0
+  codex: 0.166.0
+  gitleaks: 8.21.2  # placeholder, binary release: unused until a later slice
+  woodpecker-cli: 3.0.0  # placeholder, binary release: unused until a later slice
+images: {}  # placeholder
+herdr_fleet:  # placeholder
+  version: 0.1.0

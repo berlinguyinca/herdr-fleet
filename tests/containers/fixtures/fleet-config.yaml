@@ -1,0 +1,9 @@
+# Test fixture: one host that the container scenarios run on with --connection local.
+version: 1
+hosts:
+  host-a:
+    os: debian
+    roles: [baseline, toolchain]
+    connection:
+      address: localhost
+      user: fleet

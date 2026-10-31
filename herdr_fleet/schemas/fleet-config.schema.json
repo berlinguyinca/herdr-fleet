@@ -9,6 +9,7 @@
     "hosts": {
       "type": "object",
       "minProperties": 1,
+      "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
       "additionalProperties": {"$ref": "#/$defs/host"}
     },
     "services": {
@@ -72,9 +73,12 @@
           "additionalProperties": false,
           "required": ["address", "user"],
           "properties": {
-            "address": {"type": "string", "minLength": 1},
-            "user": {"type": "string", "minLength": 1},
-            "jump_host": {"type": "string", "minLength": 1}
+            "address": {
+              "type": "string",
+              "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\\[[0-9A-Fa-f:.]+\\])$"
+            },
+            "user": {"type": "string", "pattern": "^[a-z_][a-z0-9._-]*$"},
+            "jump_host": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"}
           }
         }
       }

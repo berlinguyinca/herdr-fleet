@@ -1,0 +1,11 @@
+---
+# Where the managed toolchain lives. Independent of any user's nvm, so a changed shell default
+# Node can never remove the fleet's CLIs.
+toolchain_home: "{{ ansible_facts.env.HOME }}"
+toolchain_prefix: "{{ toolchain_home }}/.local/share/herdr-fleet/toolchain"
+toolchain_shim_dir: "{{ toolchain_home }}/.local/bin"
+toolchain_cache_dir: "{{ toolchain_prefix }}/cache"
+toolchain_node_dist_url: https://nodejs.org/dist
+
+# Supplied from fleet.lock by herdr-fleet (extra-vars), never defaulted here:
+#   toolchain_node_version, toolchain_node_sha256, toolchain_clis

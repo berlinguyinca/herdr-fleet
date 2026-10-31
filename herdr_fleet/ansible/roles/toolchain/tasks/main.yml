@@ -1,0 +1,125 @@
+---
+- name: require the pins from fleet.lock
+  ansible.builtin.assert:
+    that:
+      - toolchain_node_version is defined
+      - toolchain_node_sha256 is defined
+      - toolchain_clis is defined
+    fail_msg: toolchain_* variables come from fleet.lock via herdr-fleet; do not run this role by hand
+    quiet: true
+
+- name: derive the platform key
+  ansible.builtin.set_fact:
+    toolchain_platform: >-
+      {{ {'Linux': 'linux', 'Darwin': 'darwin'}.get(ansible_facts.system, 'unsupported') }}-{{
+      {'x86_64': 'x64', 'amd64': 'x64', 'aarch64': 'arm64', 'arm64': 'arm64'}.get(
+      ansible_facts.architecture, 'unsupported') }}
+
+- name: require a node checksum for this platform
+  ansible.builtin.assert:
+    that: toolchain_platform in toolchain_node_sha256
+    fail_msg: >-
+      fleet.lock has no node.sha256 for {{ toolchain_platform }}; add the sha256 of the official
+      archive from https://nodejs.org/dist/v{{ toolchain_node_version }}/SHASUMS256.txt
+    quiet: true
+
+- name: derive node paths
+  ansible.builtin.set_fact:
+    toolchain_node_dir: "{{ toolchain_prefix }}/node/{{ toolchain_node_version }}"
+    toolchain_node_archive: >-
+      node-v{{ toolchain_node_version }}-{{ toolchain_platform }}.{{
+      'tar.xz' if toolchain_platform.startswith('linux') else 'tar.gz' }}
+
+- name: directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ toolchain_prefix }}"
+    - "{{ toolchain_prefix }}/node"
+    - "{{ toolchain_prefix }}/bin"
+    - "{{ toolchain_cache_dir }}"
+  register: toolchain_dirs
+
+# ~/.local/bin is the user's own directory: create it if missing, never change its mode.
+- name: shim directory exists
+  ansible.builtin.file:
+    path: "{{ toolchain_shim_dir }}"
+    state: directory
+  register: toolchain_shim_dir_result
+
+# Check mode does not create directories, so steps that need them cannot be simulated until they
+# exist; the directory change above is already reported as drift.
+- name: work out whether later steps can run
+  ansible.builtin.set_fact:
+    toolchain_can_run: >-
+      {{ not ansible_check_mode or not (toolchain_dirs.changed or toolchain_shim_dir_result.changed) }}
+
+- name: probe the pinned node
+  ansible.builtin.stat:
+    path: "{{ toolchain_node_dir }}/bin/node"
+  register: toolchain_node_stat
+
+- name: install the pinned node
+  when: toolchain_can_run and not toolchain_node_stat.stat.exists
+  block:
+    # get_url verifies the lock's sha256 and refuses (and removes the download) on a mismatch,
+    # so nothing below ever sees an unverified archive. Check mode never touches the network, so a
+    # wrong checksum or an unreachable mirror only surfaces on apply; "move node ... into place"
+    # below is what reports the pending install.
+    - name: download node {{ toolchain_node_version }} and verify its sha256
+      ansible.builtin.get_url:
+        url: "{{ toolchain_node_dist_url }}/v{{ toolchain_node_version }}/{{ toolchain_node_archive }}"
+        dest: "{{ toolchain_cache_dir }}/{{ toolchain_node_archive }}"
+        checksum: "sha256:{{ toolchain_node_sha256[toolchain_platform] }}"
+        mode: "0644"
+      when: not ansible_check_mode
+
+    - name: clear any half-extracted staging directory
+      ansible.builtin.file:
+        path: "{{ toolchain_node_dir }}.partial"
+        state: absent
+
+    - name: create the staging directory
+      ansible.builtin.file:
+        path: "{{ toolchain_node_dir }}.partial"
+        state: directory
+        mode: "0755"
+
+    - name: extract the verified archive into staging
+      ansible.builtin.unarchive:
+        src: "{{ toolchain_cache_dir }}/{{ toolchain_node_archive }}"
+        dest: "{{ toolchain_node_dir }}.partial"
+        remote_src: true
+        extra_opts: ["--strip-components=1"]
+      when: not ansible_check_mode
+
+    # The pinned dir exists without bin/node only after an interrupted install or by hand; mv
+    # would nest the staging dir inside it instead of replacing it.
+    - name: remove an incomplete node {{ toolchain_node_version }} directory
+      ansible.builtin.file:
+        path: "{{ toolchain_node_dir }}"
+        state: absent
+
+    - name: move node {{ toolchain_node_version }} into place
+      ansible.builtin.command:
+        argv: ["mv", "{{ toolchain_node_dir }}.partial", "{{ toolchain_node_dir }}"]
+        creates: "{{ toolchain_node_dir }}/bin/node"
+
+- name: point the managed bin at the pinned node
+  ansible.builtin.file:
+    src: "{{ toolchain_node_dir }}/bin/{{ item }}"
+    dest: "{{ toolchain_prefix }}/bin/{{ item }}"
+    state: link
+    force: true  # check mode: the pinned node may not be extracted yet, so src does not exist
+  loop: [node, npm, npx]
+  when: toolchain_can_run
+
+- name: install the global CLIs and their shims
+  ansible.builtin.include_tasks: cli.yml
+  loop: "{{ toolchain_clis }}"
+  loop_control:
+    loop_var: cli
+    label: "{{ cli.name }}"
+  when: toolchain_can_run
