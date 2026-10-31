@@ -177,10 +177,14 @@ def test_a_missing_or_wrong_fabric_url_is_named(pins: HerdrEngineeringPins) -> N
     ]
 
 
-def test_the_control_plane_line_is_only_checked_when_configured(
+def test_the_control_plane_line_is_required_when_configured_and_stale_when_not(
     pins: HerdrEngineeringPins,
 ) -> None:
-    assert only(pins, fabric_env_control_plane_url="https://other.example.com") == []
+    assert only(pins, fabric_env_control_plane_url="https://other.example.com") == [
+        "fabric.env: expected no HERDR_ENGINEERING_CONTROL_PLANE_URL, found "
+        "HERDR_ENGINEERING_CONTROL_PLANE_URL=https://other.example.com"
+    ]
+    assert only(pins, fabric_env_control_plane_url=None) == []
     configured = HerdrEngineeringPins(SHA, pins.repository, GATEWAY, "https://control.example.com")
     assert only(configured) == [
         "fabric.env: expected HERDR_ENGINEERING_CONTROL_PLANE_URL=https://control.example.com, "

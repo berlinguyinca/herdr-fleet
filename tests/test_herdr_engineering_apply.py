@@ -467,3 +467,28 @@ def test_a_release_without_a_build_gate_is_not_permanent_drift(
     fp = verify(tmp_path, gateless, monkeypatch)
     assert section_of(fp).build_gate_release_sha256 is None
     assert messages(fp, gateless) == []
+
+
+def test_removing_the_control_plane_url_is_drift_and_apply_removes_the_stale_line(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(
+        tmp_path,
+        source,
+        Mode.APPLY,
+        monkeypatch,
+        herdr_engineering_control_plane_url="https://control.example.com",
+    )
+    env_file(tmp_path).write_text(env_file(tmp_path).read_text() + "OTHER=kept\n")
+    fp = verify(tmp_path, source, monkeypatch)  # the config no longer sets the control plane
+    found = messages(fp, source)
+    assert found == [
+        "fabric.env: expected no HERDR_ENGINEERING_CONTROL_PLANE_URL, found "
+        "HERDR_ENGINEERING_CONTROL_PLANE_URL=https://control.example.com"
+    ]
+    pending = converge(tmp_path, source, Mode.CHECK, monkeypatch)
+    assert any("control plane URL" in task and "pending" not in task for task in changed(pending))
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    text = env_file(tmp_path).read_text()
+    assert "CONTROL_PLANE" not in text and "OTHER=kept\n" in text
+    assert messages(verify(tmp_path, source, monkeypatch), source) == []

@@ -29,6 +29,14 @@
   register: herdr_engineering_env_control
   when: herdr_engineering_control_plane_url | default(none) is not none
 
+# Removing services.control_plane.url from the config removes the line it once wrote.
+- name: fabric.env control plane URL removed
+  ansible.builtin.lineinfile:
+    path: "{{ herdr_engineering_env_file }}"
+    regexp: "^HERDR_ENGINEERING_CONTROL_PLANE_URL="
+    state: absent
+  when: herdr_engineering_control_plane_url | default(none) is none
+
 - name: release unit template
   ansible.builtin.slurp:
     src: "{{ herdr_engineering_unit_template }}"

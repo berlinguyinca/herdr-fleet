@@ -153,6 +153,9 @@ def _fabric_env_differences(
     for key, want, have in expected:
         if want is not None and have != want:
             out.append(Difference("fabric.env", f"{key}={want}", _env_line(key, have)))
+        elif want is None and key == CONTROL_PLANE_URL_KEY and have is not None:
+            # Removed from the config: apply deletes the line, so a leftover one is drift.
+            out.append(Difference("fabric.env", f"no {key}", _env_line(key, have)))
     if found.fabric_env_mode is not None and found.fabric_env_mode != ENV_MODE:
         out.append(Difference("fabric.env mode", ENV_MODE, found.fabric_env_mode))
     return out
