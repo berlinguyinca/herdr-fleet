@@ -1,0 +1,70 @@
+---
+- name: installed herdr binary
+  ansible.builtin.stat:
+    path: "{{ herdr_bin }}"
+    checksum_algorithm: sha256
+  register: fp_herdr_stat
+  check_mode: false
+
+- name: herdr --version
+  ansible.builtin.command:
+    argv: ["{{ herdr_bin }}", --version]
+  register: fp_herdr_version
+  when: fp_herdr_stat.stat.exists
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+# The running server may be older than the binary on disk (it keeps its build until restarted or
+# handed off); that is reported, never treated as drift, until session-aware activation exists.
+- name: herdr status
+  ansible.builtin.command:
+    argv: [timeout, "10", "{{ herdr_bin }}", status]
+  register: fp_herdr_status
+  when: fp_herdr_stat.stat.exists and ansible_facts.system == 'Linux'
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+# A bash login shell (bash -l, no TTY) with a clean environment: what a service or a job would
+# see. Profile scripts may print anything, so the answer is the RESOLVED= marker line only.
+- name: where a bash login shell finds herdr
+  ansible.builtin.command:
+    argv:
+      - env
+      - -i
+      - "HOME={{ herdr_home }}"
+      - PATH=/usr/local/bin:/usr/bin:/bin
+      - bash
+      - -lc
+      - "printf 'RESOLVED=%s\\n' \"$(command -v herdr)\""
+  register: fp_herdr_resolved
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: read the herdr probe results
+  ansible.builtin.set_fact:
+    fp_herdr_resolved_path: >-
+      {{ (fp_herdr_resolved.stdout_lines | default([]) | select('match', '^RESOLVED=') | list
+      | last | default('RESOLVED=')) | regex_replace('^RESOLVED=', '') | trim }}
+    fp_herdr_version_text: >-
+      {{ (fp_herdr_version.stdout | default('') | trim).split('\n')[0] | regex_search('^herdr\s+(\S+)', '\1')
+      | default([], true) | first | default('', true) }}
+    fp_herdr_server_text: >-
+      {{ (fp_herdr_status.stdout | default('') | regex_search('(?m)^server:\n(?:[ ]+.*\n)*?[ ]+version:[ ]*(\S+)', '\1')
+      | default([], true) | first | default('', true)) }}
+
+- name: record herdr
+  ansible.builtin.set_fact:
+    fleet_fingerprint: >-
+      {{ fleet_fingerprint | default({}) | combine({
+      'system': ansible_facts.system,
+      'machine': ansible_facts.architecture,
+      'herdr': {
+      'path': herdr_bin,
+      'present': fp_herdr_stat.stat.exists,
+      'version': (fp_herdr_version_text if fp_herdr_version_text | length > 0 else None),
+      'sha256': (fp_herdr_stat.stat.checksum if fp_herdr_stat.stat.exists else None),
+      'resolved_path': (fp_herdr_resolved_path if fp_herdr_resolved_path | length > 0 else None),
+      'server_version': (fp_herdr_server_text if fp_herdr_server_text | length > 0 else None)}}) }}

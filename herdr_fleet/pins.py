@@ -10,13 +10,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from herdr_fleet.config import FleetConfig, FleetLock
+from herdr_fleet.herdr import HerdrPins, herdr_pins
 from herdr_fleet.toolchain import ToolchainPins, toolchain_pins
 
 
 @dataclass(frozen=True)
 class FleetPins:
     toolchain: ToolchainPins
+    herdr: HerdrPins
 
 
 def fleet_pins(lock: FleetLock, config: FleetConfig) -> FleetPins:
-    return FleetPins(toolchain=toolchain_pins(lock))
+    return FleetPins(toolchain=toolchain_pins(lock), herdr=herdr_pins(lock))

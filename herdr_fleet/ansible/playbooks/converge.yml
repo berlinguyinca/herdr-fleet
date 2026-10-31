@@ -46,6 +46,23 @@
               tags: [fingerprint]
           tags: [fingerprint]
           when: "'toolchain' in fleet_roles"
+
+        - name: Role herdr
+          ansible.builtin.include_role:
+            name: herdr
+            apply:
+              tags: [converge]
+          when: "'herdr' in fleet_roles"
+          tags: [converge]
+
+        - name: Fingerprint herdr
+          ansible.builtin.include_role:
+            name: herdr
+            tasks_from: fingerprint
+            apply:
+              tags: [fingerprint]
+          tags: [fingerprint]
+          when: "'herdr' in fleet_roles"
       rescue:
         - name: Stop the run at the first failed host
           ansible.builtin.fail:

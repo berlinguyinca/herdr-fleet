@@ -7,11 +7,12 @@ import shlex
 from collections.abc import Sequence
 
 from herdr_fleet.config import FleetConfig, FleetLock, Host
+from herdr_fleet.herdr import HERDR_ASSETS, HerdrPins
 from herdr_fleet.pins import fleet_pins
 from herdr_fleet.toolchain import CLI_SPECS, ToolchainPins
 
 # Roles that have an Ansible implementation in this release; the rest are planned, not run.
-IMPLEMENTED_ROLES: tuple[str, ...] = ("toolchain",)
+IMPLEMENTED_ROLES: tuple[str, ...] = ("toolchain", "herdr")
 
 JsonObject = dict[str, object]
 
@@ -101,7 +102,15 @@ def _toolchain_vars(pins: ToolchainPins) -> JsonObject:
     }
 
 
+def _herdr_vars(pins: HerdrPins) -> JsonObject:
+    return {
+        "herdr_version": pins.version,
+        "herdr_sha256": dict(pins.sha256),
+        "herdr_assets": dict(HERDR_ASSETS),
+    }
+
+
 def build_extra_vars(lock: FleetLock, config: FleetConfig) -> JsonObject:
     """Every role's Ansible variables; roles never read the lock or the config themselves."""
     pins = fleet_pins(lock, config)
-    return {**_toolchain_vars(pins.toolchain)}
+    return {**_toolchain_vars(pins.toolchain), **_herdr_vars(pins.herdr)}

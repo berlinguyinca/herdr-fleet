@@ -10,6 +10,7 @@ from enum import StrEnum
 from typing import cast
 
 from herdr_fleet.fingerprint import Difference, Fingerprint, FingerprintError, compare
+from herdr_fleet.herdr import compare_herdr
 from herdr_fleet.inventory import IMPLEMENTED_ROLES
 from herdr_fleet.pins import FleetPins
 
@@ -30,9 +31,16 @@ def _compare_toolchain(fp: Fingerprint, pins: FleetPins) -> list[Difference]:
     return compare(fp, pins.toolchain)
 
 
+def _compare_herdr(fp: Fingerprint, pins: FleetPins) -> list[Difference]:
+    return compare_herdr(fp, pins.herdr)
+
+
 # One comparator per implemented role that reports a fingerprint section. Adding a role means
 # registering its comparator here and nothing else in this module.
-ROLE_COMPARATORS: Mapping[str, Comparator] = {"toolchain": _compare_toolchain}
+ROLE_COMPARATORS: Mapping[str, Comparator] = {
+    "toolchain": _compare_toolchain,
+    "herdr": _compare_herdr,
+}
 
 
 def expects_fingerprint(roles: Sequence[str]) -> bool:

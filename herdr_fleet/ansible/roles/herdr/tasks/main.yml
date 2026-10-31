@@ -1,0 +1,88 @@
+---
+- name: require the pins from fleet.lock
+  ansible.builtin.assert:
+    that:
+      - herdr_version is defined
+      - herdr_sha256 is defined
+      - herdr_assets is defined
+    fail_msg: herdr_* variables come from fleet.lock via herdr-fleet; do not run this role by hand
+    quiet: true
+
+- name: derive the platform key
+  ansible.builtin.set_fact:
+    herdr_platform: >-
+      {{ {'Linux': 'linux', 'Darwin': 'darwin'}.get(ansible_facts.system, 'unsupported') }}-{{
+      {'x86_64': 'x64', 'amd64': 'x64', 'aarch64': 'arm64', 'arm64': 'arm64'}.get(
+      ansible_facts.architecture, 'unsupported') }}
+
+- name: require a herdr checksum for this platform
+  ansible.builtin.assert:
+    that:
+      - herdr_platform in herdr_sha256
+      - herdr_platform in herdr_assets
+    fail_msg: >-
+      fleet.lock has no herdr.sha256 for {{ herdr_platform }}; add the digest from the release's
+      GitHub asset (the "digest" field of
+      https://api.github.com/repos/herdrdev/herdr/releases/tags/v{{ herdr_version }})
+    quiet: true
+
+- name: derive herdr paths
+  ansible.builtin.set_fact:
+    herdr_asset: "{{ herdr_assets[herdr_platform] }}"
+    herdr_expected_sha256: "{{ herdr_sha256[herdr_platform] }}"
+    herdr_cached: "{{ herdr_cache_dir }}/{{ herdr_version }}/{{ herdr_assets[herdr_platform] }}"
+
+- name: directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ herdr_prefix }}"
+    - "{{ herdr_cache_dir }}"
+    - "{{ herdr_cache_dir }}/{{ herdr_version }}"
+
+# ~/.local/bin is the user's own directory: create it if missing, never change its mode.
+- name: binary directory exists
+  ansible.builtin.file:
+    path: "{{ herdr_bin_dir }}"
+    state: directory
+
+- name: probe the installed binary
+  ansible.builtin.stat:
+    path: "{{ herdr_bin }}"
+    checksum_algorithm: sha256
+  register: herdr_installed
+
+- name: work out whether the pinned binary is installed
+  ansible.builtin.set_fact:
+    herdr_pending: >-
+      {{ not herdr_installed.stat.exists or herdr_installed.stat.checksum != herdr_expected_sha256 }}
+
+# get_url verifies the lock's sha256 and refuses (and removes the download) on a mismatch, so the
+# copy below never sees an unverified file and an existing binary stays untouched. A cached copy
+# that already matches is not downloaded again. Check mode never touches the network; the marker
+# below reports the pending install instead.
+- name: install herdr {{ herdr_version }}
+  when: not ansible_check_mode and herdr_pending
+  block:
+    - name: download herdr {{ herdr_version }} and verify its sha256
+      ansible.builtin.get_url:
+        url: "{{ herdr_release_base_url }}/v{{ herdr_version }}/{{ herdr_asset }}"
+        dest: "{{ herdr_cached }}"
+        checksum: "sha256:{{ herdr_expected_sha256 }}"
+        mode: "0644"
+
+    - name: put the verified herdr {{ herdr_version }} in place
+      ansible.builtin.copy:
+        src: "{{ herdr_cached }}"
+        dest: "{{ herdr_bin }}"
+        remote_src: true
+        mode: "0755"
+
+- name: install herdr {{ herdr_version }} (pending)
+  ansible.builtin.command:
+    argv: [/bin/true]
+  changed_when: true
+  check_mode: false
+  when: ansible_check_mode and herdr_pending

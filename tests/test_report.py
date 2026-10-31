@@ -8,6 +8,7 @@ import pytest
 
 from herdr_fleet.config import load_lock
 from herdr_fleet.fingerprint import Difference, Fingerprint
+from herdr_fleet.herdr import herdr_pins
 from herdr_fleet.inventory import IMPLEMENTED_ROLES
 from herdr_fleet.pins import FleetPins
 from herdr_fleet.report import (
@@ -27,6 +28,11 @@ from herdr_fleet.report import (
 )
 from herdr_fleet.toolchain import ToolchainPins, toolchain_pins
 from tests.helpers import LOCK_EXAMPLE
+
+
+def fleet_pins_of(pins: ToolchainPins) -> FleetPins:
+    return FleetPins(toolchain=pins, herdr=herdr_pins(load_lock(LOCK_EXAMPLE)))
+
 
 HOST_ROLES = {"host-a": ("baseline", "toolchain")}
 
@@ -78,7 +84,7 @@ def fingerprint(pins: ToolchainPins, *, node: str | None, pi: str | None) -> str
 
 
 def reports(lines: list[str], pins: ToolchainPins) -> list[HostReport]:
-    return build_reports(parse_events("\n".join(lines)), HOST_ROLES, FleetPins(toolchain=pins))
+    return build_reports(parse_events("\n".join(lines)), HOST_ROLES, fleet_pins_of(pins))
 
 
 def test_parse_ignores_non_event_lines() -> None:
@@ -208,7 +214,7 @@ def test_host_with_no_events_is_not_attempted_not_missing_fingerprint(pins: Tool
     ran, skipped = build_reports(
         parse_events(task("failed", "directories exist", host="host-a")),
         {"host-a": ("toolchain",), "host-b": ("toolchain",)},
-        FleetPins(toolchain=pins),
+        fleet_pins_of(pins),
     )
     assert ran.status == "failed"
     assert skipped.status == "not-attempted" and not skipped.attempted
@@ -231,7 +237,7 @@ def test_differences_come_from_the_registered_comparator(pins: ToolchainPins) ->
 
     parsed = parse_events(fingerprint(pins, node="22.11.0", pi="1.2.3"))
     (report,) = build_reports(
-        parsed, HOST_ROLES, FleetPins(toolchain=pins), comparators={"toolchain": always_differs}
+        parsed, HOST_ROLES, fleet_pins_of(pins), comparators={"toolchain": always_differs}
     )
     toolchain = next(r for r in report.roles if r.role == "toolchain")
     assert [d.field for d in toolchain.differences] == ["registry"]
@@ -241,7 +247,7 @@ def test_missing_fingerprint_is_an_error_whenever_any_implemented_role_is_on_the
     pins: ToolchainPins,
 ) -> None:
     only_unimplemented = build_reports(
-        parse_events(task("ok", "probe")), {"host-a": ("baseline",)}, FleetPins(toolchain=pins)
+        parse_events(task("ok", "probe")), {"host-a": ("baseline",)}, fleet_pins_of(pins)
     )
     assert only_unimplemented[0].errors == ()
     assert expects_fingerprint(("secret-scan", "toolchain")) is True
@@ -253,8 +259,32 @@ def test_fingerprint_event_with_extra_sections_still_compares_toolchain(
 ) -> None:
     event = json.loads(fingerprint(pins, node="22.11.0", pi="1.2.3"))
     event["fingerprint"]["herdr"] = {"version": "0.9.1"}
-    (report,) = build_reports(
-        parse_events(json.dumps(event)), HOST_ROLES, FleetPins(toolchain=pins)
-    )
+    (report,) = build_reports(parse_events(json.dumps(event)), HOST_ROLES, fleet_pins_of(pins))
     assert check_exit_code([report]) == EXIT_OK
     assert report.to_json()["fingerprint"]["herdr"] == {"version": "0.9.1"}  # type: ignore[index]
+
+
+def test_herdr_role_is_compared_through_the_registry(pins: ToolchainPins) -> None:
+    event = json.dumps(
+        {
+            "event": "fingerprint",
+            "host": "host-a",
+            "fingerprint": {
+                "system": "Linux",
+                "machine": "x86_64",
+                "herdr": {
+                    "path": "/h/.local/bin/herdr",
+                    "present": False,
+                    "version": None,
+                    "sha256": None,
+                    "resolved_path": None,
+                    "server_version": None,
+                },
+            },
+        }
+    )
+    (report,) = build_reports(parse_events(event), {"host-a": ("herdr",)}, fleet_pins_of(pins))
+    (herdr,) = report.roles
+    assert herdr.role == "herdr" and herdr.status is RoleStatus.DRIFT
+    assert [d.field for d in herdr.differences] == ["herdr"]
+    assert "found missing" in herdr.differences[0].message
