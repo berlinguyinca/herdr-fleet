@@ -231,3 +231,50 @@ def test_the_asset_is_executable_by_the_user_shell(
     converge(tmp_path, release, Mode.APPLY, monkeypatch)
     out = subprocess.run([str(installed(tmp_path)), "--version"], capture_output=True, text=True)
     assert out.stdout.strip() == f"herdr {VERSION}"
+
+
+# --- a path that is not a regular file --------------------------------------------------------
+
+
+def test_a_symlinked_binary_is_drift_and_apply_replaces_the_link_not_its_target(
+    tmp_path: Path, release: Release, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    elsewhere = tmp_path / "elsewhere" / "herdr"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text("#!/bin/sh\necho somebody else's herdr\n")
+    link = installed(tmp_path)
+    link.parent.mkdir(parents=True)
+    link.symlink_to(elsewhere)
+    fp = verify(tmp_path, release, monkeypatch)  # must not crash
+    messages = [d.message for d in compare_herdr(fp, release.pins)]
+    assert any(m.startswith("herdr binary: expected sha256 ") for m in messages)
+    assert "pending" in " ".join(changed(converge(tmp_path, release, Mode.CHECK, monkeypatch)))
+    converge(tmp_path, release, Mode.APPLY, monkeypatch)
+    assert not link.is_symlink() and link.read_text() == FAKE_HERDR
+    assert elsewhere.read_text() == "#!/bin/sh\necho somebody else's herdr\n"
+    assert compare_herdr(verify(tmp_path, release, monkeypatch), release.pins) == []
+
+
+def test_a_dangling_symlink_is_replaced_too(
+    tmp_path: Path, release: Release, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    link = installed(tmp_path)
+    link.parent.mkdir(parents=True)
+    link.symlink_to(tmp_path / "gone")
+    converge(tmp_path, release, Mode.APPLY, monkeypatch)
+    assert not link.is_symlink() and link.read_text() == FAKE_HERDR
+
+
+def test_a_directory_at_the_binary_path_is_reported_and_apply_refuses_with_a_clear_message(
+    tmp_path: Path, release: Release, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = installed(tmp_path)
+    target.mkdir(parents=True)
+    (target / "keep").write_text("mine\n")
+    fp = verify(tmp_path, release, monkeypatch)
+    assert any(d.field == "herdr binary" for d in compare_herdr(fp, release.pins))
+    events = converge(tmp_path, release, Mode.APPLY, monkeypatch, check_ok=False)
+    assert any(t.status == "failed" for t in events.tasks)
+    result = run_playbook(LOCAL, variables(release), Mode.APPLY)
+    assert "is a directory" in result.stdout and "remove or move it" in result.stdout
+    assert (target / "keep").read_text() == "mine\n"

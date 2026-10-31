@@ -54,10 +54,26 @@
     checksum_algorithm: sha256
   register: herdr_installed
 
+# stat does not follow links: a symlink or a directory has no checksum, and only a regular file
+# can be the pinned binary.
 - name: work out whether the pinned binary is installed
   ansible.builtin.set_fact:
     herdr_pending: >-
-      {{ not herdr_installed.stat.exists or herdr_installed.stat.checksum != herdr_expected_sha256 }}
+      {{ not herdr_installed.stat.exists or not (herdr_installed.stat.isreg | default(false))
+      or herdr_installed.stat.checksum | default('') != herdr_expected_sha256 }}
+
+- name: refuse to replace a directory
+  ansible.builtin.fail:
+    msg: >-
+      {{ herdr_bin }} is a directory, not the herdr binary; remove or move it, then re-run apply
+  when: not ansible_check_mode and herdr_pending and herdr_installed.stat.isdir | default(false)
+
+# The link goes, never its target: copying onto a symlink would overwrite whatever it points at.
+- name: remove a symlink standing where the binary belongs
+  ansible.builtin.file:
+    path: "{{ herdr_bin }}"
+    state: absent
+  when: not ansible_check_mode and herdr_pending and herdr_installed.stat.islnk | default(false)
 
 # get_url verifies the lock's sha256 and refuses (and removes the download) on a mismatch, so the
 # copy below never sees an unverified file and an existing binary stays untouched. A cached copy
