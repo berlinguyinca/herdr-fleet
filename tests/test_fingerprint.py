@@ -23,6 +23,9 @@ def good_raw(pins: ToolchainPins) -> RawFingerprint:
                 "shim_path": f"/home/u/.local/bin/{cmd}",
                 "shim_present": True,
                 "resolved_path": f"/home/u/.local/bin/{cmd}",
+                "target_path": f"/home/u/.local/share/herdr-fleet/toolchain/bin/{cmd}",
+                "target_present": True,
+                "shim_runs": True,
             }
             for (name, cmd), version in zip(
                 (("pi-cli", "pi"), ("codex", "codex")),
@@ -133,3 +136,41 @@ def test_malformed_fingerprint_raises() -> None:
         Fingerprint.from_json({"machine": "x86_64"})
     with pytest.raises(FingerprintError, match="clis"):
         Fingerprint.from_json({"system": "Linux", "machine": "x", "node_version": None})
+
+
+def test_dangling_managed_bin_is_drift_even_with_the_right_package(pins: ToolchainPins) -> None:
+    raw = good_raw(pins)
+    clis = raw["clis"]
+    assert isinstance(clis, dict)
+    clis["pi-cli"]["target_present"] = False
+    clis["pi-cli"]["shim_runs"] = False
+    (diff,) = compare(Fingerprint.from_json(raw), pins)
+    assert diff.field == "bin pi-cli" and diff.actual == "missing"
+    assert diff.expected.endswith("/toolchain/bin/pi present")
+
+
+def test_shim_that_cannot_start_is_drift(pins: ToolchainPins) -> None:
+    raw = good_raw(pins)
+    clis = raw["clis"]
+    assert isinstance(clis, dict)
+    clis["codex"]["shim_runs"] = False
+    assert compare(Fingerprint.from_json(raw), pins) == [
+        Difference("shim codex", "`--version` exits 0", "fails to run")
+    ]
+
+
+def test_missing_package_is_not_buried_under_shim_health(pins: ToolchainPins) -> None:
+    raw = good_raw(pins)
+    clis = raw["clis"]
+    assert isinstance(clis, dict)
+    clis["pi-cli"].update(version=None, target_present=False, shim_runs=False)
+    assert [d.field for d in compare(Fingerprint.from_json(raw), pins)] == ["cli pi-cli"]
+
+
+def test_fingerprint_missing_health_flags_raises(pins: ToolchainPins) -> None:
+    raw = good_raw(pins)
+    clis = raw["clis"]
+    assert isinstance(clis, dict)
+    del clis["pi-cli"]["shim_runs"]
+    with pytest.raises(FingerprintError, match="shim_runs"):
+        Fingerprint.from_json(raw)

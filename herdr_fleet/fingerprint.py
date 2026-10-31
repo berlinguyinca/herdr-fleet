@@ -32,6 +32,9 @@ class CliFingerprint:
     shim_path: str
     shim_present: bool
     resolved_path: str | None
+    target_path: str
+    target_present: bool  # the managed prefix's bin/<cmd> exists (symlinks followed)
+    shim_runs: bool  # `<shim> --version` exited 0 with the managed PATH
 
     @property
     def resolves_to_shim(self) -> bool:
@@ -70,6 +73,9 @@ class Fingerprint:
                     "shim_path": c.shim_path,
                     "shim_present": c.shim_present,
                     "resolved_path": c.resolved_path,
+                    "target_path": c.target_path,
+                    "target_present": c.target_present,
+                    "shim_runs": c.shim_runs,
                     "resolves_to_shim": c.resolves_to_shim,
                 }
                 for name, c in self.clis.items()
@@ -99,15 +105,22 @@ def _mapping(raw: JsonObject, key: str) -> Mapping[str, JsonObject]:
 
 
 def _cli(name: str, entry: JsonObject) -> CliFingerprint:
-    present = entry.get("shim_present")
-    if not isinstance(present, bool):
-        raise FingerprintError(f"fingerprint: clis.{name}.shim_present: expected a boolean")
     return CliFingerprint(
         version=_optional_text(entry, "version"),
         shim_path=_text(entry, "shim_path"),
-        shim_present=present,
+        shim_present=_flag(name, entry, "shim_present"),
         resolved_path=_optional_text(entry, "resolved_path"),
+        target_path=_text(entry, "target_path"),
+        target_present=_flag(name, entry, "target_present"),
+        shim_runs=_flag(name, entry, "shim_runs"),
     )
+
+
+def _flag(name: str, entry: JsonObject, key: str) -> bool:
+    value = entry.get(key)
+    if not isinstance(value, bool):
+        raise FingerprintError(f"fingerprint: clis.{name}.{key}: expected a boolean")
+    return value
 
 
 def _platform_differences(fp: Fingerprint, pins: ToolchainPins) -> list[Difference]:
@@ -128,9 +141,20 @@ def _cli_differences(name: str, expected: str, fp: Fingerprint) -> list[Differen
         found.append(Difference(f"cli {name}", expected, cli.version or "missing"))
     if not cli.shim_present:
         found.append(Difference(f"shim {name}", cli.shim_path, "missing"))
+    if cli.version == expected and cli.shim_present:
+        found.extend(_shim_health(name, cli))
     if cli.shim_present and not cli.resolves_to_shim:
         found.append(Difference(f"path {name}", cli.shim_path, cli.resolved_path or "not found"))
     return found
+
+
+def _shim_health(name: str, cli: CliFingerprint) -> list[Difference]:
+    """The package is the right version, but the shim may still be unable to start it."""
+    if not cli.target_present:
+        return [Difference(f"bin {name}", f"{cli.target_path} present", "missing")]
+    if not cli.shim_runs:
+        return [Difference(f"shim {name}", "`--version` exits 0", "fails to run")]
+    return []
 
 
 def compare(fp: Fingerprint, pins: ToolchainPins) -> list[Difference]:

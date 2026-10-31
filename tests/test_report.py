@@ -53,6 +53,9 @@ def fingerprint(pins: ToolchainPins, *, node: str | None, pi: str | None) -> str
             "shim_path": shim,
             "shim_present": version is not None,
             "resolved_path": shim if version else None,
+            "target_path": f"/h/toolchain/bin/{cmd}",
+            "target_present": version is not None,
+            "shim_runs": version is not None,
         }
 
     return json.dumps(
