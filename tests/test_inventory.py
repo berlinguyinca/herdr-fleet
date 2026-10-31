@@ -34,7 +34,7 @@ def test_ssh_inventory_maps_address_user_and_roles() -> None:
     assert host_a["ansible_connection"] == "ssh"
     assert "ansible_ssh_common_args" not in host_a
     # only roles that exist in this slice are handed to the playbook
-    assert host_a["fleet_roles"] == ["toolchain", "herdr", "herdr-engineering"]
+    assert host_a["fleet_roles"] == ["toolchain", "herdr", "herdr-engineering", "pi-runtime"]
     assert host_a["fleet_os"] == "debian"
 
 

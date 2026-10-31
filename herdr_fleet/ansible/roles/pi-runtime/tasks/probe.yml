@@ -1,0 +1,33 @@
+---
+# Read-only: what the stage helper attests about the staged Pi release. The helper's --describe is
+# offline by design and says nothing about what any running Pi session has loaded.
+- name: staging helper present
+  ansible.builtin.stat:
+    path: "{{ pi_runtime_helper }}"
+  register: pi_runtime_helper_stat
+  check_mode: false
+
+- name: attest the staged Pi release
+  ansible.builtin.command:
+    argv:
+      - "{{ pi_runtime_python }}"
+      - "{{ pi_runtime_helper }}"
+      - --kind
+      - pi
+      - --describe
+      - --home
+      - "{{ pi_runtime_home }}"
+  register: pi_runtime_describe
+  when: pi_runtime_helper_stat.stat.exists
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: read the attestation
+  ansible.builtin.set_fact:
+    pi_runtime_attested: >-
+      {{ (pi_runtime_describe.stdout | from_json).revision
+      if (pi_runtime_describe.rc | default(1)) == 0 else '' }}
+    pi_runtime_attested_root: >-
+      {{ (pi_runtime_describe.stdout | from_json).sourceRoot
+      if (pi_runtime_describe.rc | default(1)) == 0 else '' }}

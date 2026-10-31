@@ -1,0 +1,18 @@
+---
+# Stage-only role: it puts a pinned Pi release on disk and registers it in Pi's settings. It never
+# reloads, restarts or signals Pi and never touches sessions or missions; activation belongs to
+# the rollout coordinator. Layout is the stage helper's, identical to the original herdr-engineering
+# helper so the coordinator and its attestations keep working:
+#   ~/.local/share/herdr-engineering/pi/releases/<sha>   immutable checkouts (never deleted here)
+pi_runtime_home: "{{ ansible_facts.env.HOME }}"
+pi_runtime_python: python3
+pi_runtime_helper_dir: "{{ pi_runtime_home }}/.local/share/herdr-fleet/helpers"
+pi_runtime_helper: "{{ pi_runtime_helper_dir }}/stage_release.py"
+pi_runtime_root: "{{ pi_runtime_home }}/.local/share/herdr-engineering/pi"
+# npm (and node) come from the managed toolchain, never from the login shell.
+pi_runtime_toolchain_bin: "{{ pi_runtime_home }}/.local/share/herdr-fleet/toolchain/bin"
+pi_runtime_settings: "{{ pi_runtime_home }}/.pi/agent/settings.json"
+
+# Supplied from fleet.lock by herdr-fleet (extra-vars), never defaulted here:
+#   pi_runtime_revision, pi_runtime_repository, fleet_stage_release_src
+pi_runtime_release: "{{ pi_runtime_root }}/releases/{{ pi_runtime_revision }}"

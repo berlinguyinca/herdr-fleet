@@ -1,0 +1,94 @@
+---
+- name: require the pins from fleet.lock
+  ansible.builtin.assert:
+    that:
+      - pi_runtime_revision is defined
+      - pi_runtime_repository is defined
+      - fleet_stage_release_src is defined
+    fail_msg: pi_runtime_* variables come from fleet.lock via herdr-fleet; do not run this role by hand
+    quiet: true
+
+- name: require a full commit id
+  ansible.builtin.assert:
+    that: pi_runtime_revision is match('^([0-9a-f]{40}|[0-9a-f]{64})$')
+    fail_msg: repos.pi-engineering in fleet.lock must be a full lowercase commit id
+    quiet: true
+
+- name: probe git
+  ansible.builtin.command:
+    argv: [git, --version]
+  register: pi_runtime_git
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: require git
+  ansible.builtin.assert:
+    that: pi_runtime_git.rc == 0
+    fail_msg: pi-runtime stages its release with git; install git (the baseline role does)
+    quiet: true
+
+- name: staging helper directory
+  ansible.builtin.file:
+    path: "{{ pi_runtime_helper_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: install the staging helper
+  ansible.builtin.copy:
+    src: "{{ fleet_stage_release_src }}"
+    dest: "{{ pi_runtime_helper }}"
+    mode: "0700"
+
+- name: probe the staged release
+  ansible.builtin.include_tasks: probe.yml
+
+- name: work out whether the pinned release is staged and registered
+  ansible.builtin.set_fact:
+    pi_runtime_pending: "{{ pi_runtime_attested != pi_runtime_revision }}"
+
+# Check mode never runs git or npm, and the managed toolchain may not exist yet on a fresh host,
+# so the npm requirement only applies when the stage will really run.
+- name: managed toolchain npm
+  ansible.builtin.stat:
+    path: "{{ pi_runtime_toolchain_bin }}/npm"
+  register: pi_runtime_npm
+  check_mode: false
+
+- name: require the managed toolchain before staging
+  ansible.builtin.assert:
+    that: pi_runtime_npm.stat.exists
+    fail_msg: >-
+      pi-runtime installs dependencies with the npm of the managed toolchain, found none at
+      {{ pi_runtime_toolchain_bin }}/npm; add the toolchain role to this host and apply it first
+    quiet: true
+  when: not ansible_check_mode and pi_runtime_pending
+
+# Staging only. The helper refuses a dirty or wrong-commit checkout, never edits or deletes an
+# existing release (a new pin adds a release next to the old one) and merges this release into
+# Pi's settings.json packages under Pi's own lock, leaving everything else in the file alone.
+- name: stage pi-runtime {{ pi_runtime_revision[:12] }}
+  ansible.builtin.command:
+    argv:
+      - "{{ pi_runtime_python }}"
+      - "{{ pi_runtime_helper }}"
+      - --kind
+      - pi
+      - --revision
+      - "{{ pi_runtime_revision }}"
+      - --repository
+      - "{{ pi_runtime_repository }}"
+      - --path-prefix
+      - "{{ pi_runtime_toolchain_bin }}"
+      - --home
+      - "{{ pi_runtime_home }}"
+  register: pi_runtime_staged
+  changed_when: true
+  when: not ansible_check_mode and pi_runtime_pending
+
+- name: stage pi-runtime {{ pi_runtime_revision[:12] }} (pending)
+  ansible.builtin.command:
+    argv: [/bin/true]
+  changed_when: true
+  check_mode: false
+  when: ansible_check_mode and pi_runtime_pending

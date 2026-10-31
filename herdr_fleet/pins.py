@@ -18,6 +18,8 @@ from herdr_fleet.herdr_engineering import (
     HerdrEngineeringPins,
     herdr_engineering_pins,
 )
+from herdr_fleet.pi_runtime import ROLE as PI_RUNTIME_ROLE
+from herdr_fleet.pi_runtime import PiRuntimePins, pi_runtime_pins
 from herdr_fleet.toolchain import ToolchainPins, toolchain_pins
 
 
@@ -26,12 +28,18 @@ class FleetPins:
     toolchain: ToolchainPins
     herdr: HerdrPins
     herdr_engineering: HerdrEngineeringPins
+    pi_runtime: PiRuntimePins
+
+
+def _on_a_host(config: FleetConfig, role: str) -> bool:
+    return any(role in host.roles for host in config.hosts)
 
 
 def fleet_pins(lock: FleetLock, config: FleetConfig) -> FleetPins:
-    needed = any(HERDR_ENGINEERING_ROLE in host.roles for host in config.hosts)
+    needed = _on_a_host(config, HERDR_ENGINEERING_ROLE)
     return FleetPins(
         toolchain=toolchain_pins(lock),
         herdr=herdr_pins(lock),
         herdr_engineering=herdr_engineering_pins(lock, config, required=needed),
+        pi_runtime=pi_runtime_pins(lock, config, required=_on_a_host(config, PI_RUNTIME_ROLE)),
     )

@@ -11,6 +11,7 @@ from herdr_fleet.fingerprint import Difference, Fingerprint
 from herdr_fleet.herdr import herdr_pins
 from herdr_fleet.herdr_engineering import HerdrEngineeringPins
 from herdr_fleet.inventory import IMPLEMENTED_ROLES
+from herdr_fleet.pi_runtime import PiRuntimePins
 from herdr_fleet.pins import FleetPins
 from herdr_fleet.report import (
     EXIT_DRIFT,
@@ -38,6 +39,7 @@ def fleet_pins_of(pins: ToolchainPins) -> FleetPins:
         herdr_engineering=HerdrEngineeringPins(
             revision="1" * 40, repository=None, gateway_url=None, control_plane_url=None
         ),
+        pi_runtime=PiRuntimePins(revision="2" * 40, repository=None),
     )
 
 
