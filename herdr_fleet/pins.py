@@ -11,6 +11,13 @@ from dataclasses import dataclass
 
 from herdr_fleet.config import FleetConfig, FleetLock
 from herdr_fleet.herdr import HerdrPins, herdr_pins
+from herdr_fleet.herdr_engineering import (
+    ROLE as HERDR_ENGINEERING_ROLE,
+)
+from herdr_fleet.herdr_engineering import (
+    HerdrEngineeringPins,
+    herdr_engineering_pins,
+)
 from herdr_fleet.toolchain import ToolchainPins, toolchain_pins
 
 
@@ -18,7 +25,13 @@ from herdr_fleet.toolchain import ToolchainPins, toolchain_pins
 class FleetPins:
     toolchain: ToolchainPins
     herdr: HerdrPins
+    herdr_engineering: HerdrEngineeringPins
 
 
 def fleet_pins(lock: FleetLock, config: FleetConfig) -> FleetPins:
-    return FleetPins(toolchain=toolchain_pins(lock), herdr=herdr_pins(lock))
+    needed = any(HERDR_ENGINEERING_ROLE in host.roles for host in config.hosts)
+    return FleetPins(
+        toolchain=toolchain_pins(lock),
+        herdr=herdr_pins(lock),
+        herdr_engineering=herdr_engineering_pins(lock, config, required=needed),
+    )

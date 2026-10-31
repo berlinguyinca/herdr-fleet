@@ -63,6 +63,23 @@
               tags: [fingerprint]
           tags: [fingerprint]
           when: "'herdr' in fleet_roles"
+
+        - name: Role herdr-engineering
+          ansible.builtin.include_role:
+            name: herdr-engineering
+            apply:
+              tags: [converge]
+          when: "'herdr-engineering' in fleet_roles"
+          tags: [converge]
+
+        - name: Fingerprint herdr-engineering
+          ansible.builtin.include_role:
+            name: herdr-engineering
+            tasks_from: fingerprint
+            apply:
+              tags: [fingerprint]
+          tags: [fingerprint]
+          when: "'herdr-engineering' in fleet_roles"
       rescue:
         - name: Stop the run at the first failed host
           ansible.builtin.fail:

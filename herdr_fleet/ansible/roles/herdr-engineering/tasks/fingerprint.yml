@@ -1,0 +1,57 @@
+---
+- name: probe the staged release
+  ansible.builtin.include_tasks: probe.yml
+
+- name: venv entry point
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_entry }}"
+  register: fp_herdr_engineering_entry
+  check_mode: false
+
+- name: herdr-eng --version
+  ansible.builtin.command:
+    argv: ["{{ herdr_engineering_entry }}", --version]
+  register: fp_herdr_engineering_version
+  when: fp_herdr_engineering_entry.stat.exists
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+# A bash login shell (bash -l, no TTY) with a clean environment: what a service or a job would
+# see. Profile scripts may print anything, so the answer is the RESOLVED= marker line only.
+- name: where a bash login shell finds herdr-eng
+  ansible.builtin.command:
+    argv:
+      - env
+      - -i
+      - "HOME={{ herdr_engineering_home }}"
+      - PATH=/usr/local/bin:/usr/bin:/bin
+      - bash
+      - -lc
+      - "printf 'RESOLVED=%s\\n' \"$(command -v herdr-eng)\""
+  register: fp_herdr_engineering_resolved
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: read the herdr-engineering probe results
+  ansible.builtin.set_fact:
+    fp_herdr_engineering_resolved_path: >-
+      {{ (fp_herdr_engineering_resolved.stdout_lines | default([]) | select('match', '^RESOLVED=')
+      | list | last | default('RESOLVED=')) | regex_replace('^RESOLVED=', '') | trim }}
+    fp_herdr_engineering_version_text: >-
+      {{ (fp_herdr_engineering_version.stdout | default('') | trim).split('\n')[0] }}
+
+- name: record herdr-engineering
+  ansible.builtin.set_fact:
+    fleet_fingerprint: >-
+      {{ fleet_fingerprint | default({}) | combine({
+      'system': ansible_facts.system,
+      'machine': ansible_facts.architecture,
+      'herdr_engineering': {
+      'revision': (herdr_engineering_attested if herdr_engineering_attested | length > 0 else None),
+      'source_root': (herdr_engineering_attested_root if herdr_engineering_attested_root | length > 0 else None),
+      'herdr_eng_version': (fp_herdr_engineering_version_text if fp_herdr_engineering_version_text | length > 0 else None),
+      'venv_entry_present': fp_herdr_engineering_entry.stat.exists,
+      'shim_path': herdr_engineering_shim,
+      'resolved_path': (fp_herdr_engineering_resolved_path if fp_herdr_engineering_resolved_path | length > 0 else None)}}) }}

@@ -9,6 +9,7 @@ import pytest
 from herdr_fleet.config import load_lock
 from herdr_fleet.fingerprint import Difference, Fingerprint
 from herdr_fleet.herdr import herdr_pins
+from herdr_fleet.herdr_engineering import HerdrEngineeringPins
 from herdr_fleet.inventory import IMPLEMENTED_ROLES
 from herdr_fleet.pins import FleetPins
 from herdr_fleet.report import (
@@ -31,7 +32,13 @@ from tests.helpers import LOCK_EXAMPLE
 
 
 def fleet_pins_of(pins: ToolchainPins) -> FleetPins:
-    return FleetPins(toolchain=pins, herdr=herdr_pins(load_lock(LOCK_EXAMPLE)))
+    return FleetPins(
+        toolchain=pins,
+        herdr=herdr_pins(load_lock(LOCK_EXAMPLE)),
+        herdr_engineering=HerdrEngineeringPins(
+            revision="1" * 40, repository=None, gateway_url=None, control_plane_url=None
+        ),
+    )
 
 
 HOST_ROLES = {"host-a": ("baseline", "toolchain")}
