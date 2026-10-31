@@ -1,7 +1,10 @@
 # Test fixture for the container scenarios.
-# REAL (used by the toolchain role): node version + sha256 (from
-# https://nodejs.org/dist/v22.23.2/SHASUMS256.txt) and the npm CLI versions (npm view).
-# PLACEHOLDER (schema-required, not used by any role in this slice): herdr, repos, images,
+# REAL pins: node (sha256 from https://nodejs.org/dist/v22.23.2/SHASUMS256.txt), the npm CLI
+# versions (npm view), herdr 0.9.1 (the "digest" of each asset in
+# https://api.github.com/repos/herdrdev/herdr/releases/tags/v0.9.1, linux-x64 also re-hashed from
+# the downloaded file), and full commit ids of the public herdr-engineering and pi-engineering
+# repositories (git ls-remote / git log), cloned over HTTPS from repo_urls.
+# PLACEHOLDER (schema-required, not used by any role in this slice): autospec, images,
 # herdr_fleet, and the gitleaks / woodpecker-cli pins.
 version: 1
 node:
@@ -11,14 +14,20 @@ node:
     linux-arm64: "fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8"
     darwin-x64: "58e99022c2ff89395576cc7fd4d98cea24bb68081475d5f88b801ee8729fb026"
     darwin-arm64: "61130f394c1630d211dd50aecc4353d379480f36d3ac913cd85dbba1aed585c6"
-herdr:  # placeholder
-  version: 0.5.0
+herdr:
+  version: 0.9.1
   sha256:
-    linux-x64: "0000000000000000000000000000000000000000000000000000000000000003"
-repos:  # placeholder
-  herdr-engineering: "1111111111111111111111111111111111111111"
-  pi-engineering: "2222222222222222222222222222222222222222"
-  autospec: "3333333333333333333333333333333333333333"
+    linux-x64: "2a02fed16beb651ef006e1d43f048f652ca4dc58ad053cd2d44450563d5c54b7"
+    linux-arm64: "f4ccf4de745f2cb9a39a983e9ba3703dad50ec2a58dea83026ceab721bbd8d9e"
+    darwin-x64: "053be0639935fe54ab5efbdb46651054e4f6a753a5b43153c88bd6912bce1e94"
+    darwin-arm64: "5fc7a7e7adfaca56fa80aa89dcb025693357268dab8285b9ce2d08a2313c89de"
+repos:
+  herdr-engineering: "637dd6837cb974c1c69aef2e5f72c63a440454d5"
+  pi-engineering: "60c6597391a6b60c11b8b95215e0ee040884c2aa"
+  autospec: "3333333333333333333333333333333333333333"  # placeholder, no role consumes it
+repo_urls:
+  herdr-engineering: https://github.com/berlinguyinca/herdr-engineering.git
+  pi-engineering: https://github.com/berlinguyinca/pi-engineering.git
 clis:
   pi-cli: 1.4.0
   codex: 0.166.0
