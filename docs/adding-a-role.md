@@ -35,6 +35,22 @@ script or timer (spec 0001, "Extending the fleet").
    cannot run when `--check` skipped the earlier step; gate them on the thing existing, and let
    check mode report the skipped step as a pending change (the report treats "check mode"
    skips as `would_change`).
+    **Pending marker.** Work that cannot run in check mode (network, `git`, `pip`, `npm`, `apt`)
+    is reported with a marker task placed after the probe that decides whether work is pending:
+
+    ```yaml
+    - name: stage herdr-engineering {{ rev[:12] }} (pending)
+      ansible.builtin.command:
+        argv: [/bin/true]
+      changed_when: true
+      check_mode: false
+      when: ansible_check_mode and <work is pending>
+    ```
+
+    It cannot fire in apply, so apply's `changed` counts stay honest, and the real task carries
+    `when: not ansible_check_mode and <work is pending>`. `tests/test_check_marker.py` proves the
+    behaviour with real `ansible-playbook`; `tests/mirror.py` is the shared local HTTP mirror
+    (arbitrary files, request counting) for role tests that need a download.
 10. **Container scenarios.** Add scenarios under `tests/containers/` (fresh, converged,
     idempotent, drift, failure) against real downloads. See [testing.md](testing.md).
 

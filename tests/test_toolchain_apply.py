@@ -12,10 +12,8 @@ import io
 import platform
 import subprocess
 import tarfile
-import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
@@ -25,6 +23,7 @@ from herdr_fleet.inventory import build_extra_vars
 from herdr_fleet.runner import Mode, run_playbook
 from herdr_fleet.toolchain import platform_key
 from tests.helpers import LOCK_EXAMPLE
+from tests.mirror import serve_files
 
 NODE_VERSION = "22.11.0"
 FAKE_NODE = "#!/bin/sh\necho v22.11.0\n"
@@ -76,32 +75,8 @@ def mirror() -> Iterator[Mirror]:
     if key is None:
         pytest.skip("unsupported platform for the fake Node archive")
     name, payload = _archive(key)
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            if self.path.endswith(name):
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-            else:
-                self.send_response(404)
-                self.end_headers()
-
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
-            pass
-
-    server = HTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        yield Mirror(
-            f"http://127.0.0.1:{server.server_port}",
-            {key: hashlib.sha256(payload).hexdigest()},
-            key,
-        )
-    finally:
-        server.shutdown()
-        server.server_close()
+    with serve_files({f"/v{NODE_VERSION}/{name}": payload}) as running:
+        yield Mirror(running.url, {key: hashlib.sha256(payload).hexdigest()}, key)
 
 
 LOCAL = {
