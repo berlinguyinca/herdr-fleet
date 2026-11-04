@@ -6,7 +6,12 @@ from dataclasses import dataclass
 
 from herdr_fleet import sections
 from herdr_fleet.config import FleetConfig, FleetLock
-from herdr_fleet.fingerprint import Difference, Fingerprint, FingerprintError
+from herdr_fleet.fingerprint import (
+    Difference,
+    Fingerprint,
+    FingerprintError,
+    path_not_on_path_note,
+)
 from herdr_fleet.python_requirements import python_requirements
 from herdr_fleet.repos import repo_url
 
@@ -68,6 +73,16 @@ def _service_state(raw: sections.Section) -> str:
     return state
 
 
+def _duplicate_keys(raw: sections.Section) -> tuple[str, ...]:
+    value = raw.get("fabric_env_duplicates", [])
+    if not isinstance(value, list) or not all(isinstance(key, str) for key in value):
+        raise FingerprintError(
+            f"fingerprint: {SECTION}.fabric_env_duplicates: expected a list of strings, "
+            f"got {value!r}"
+        )
+    return tuple(value)
+
+
 @dataclass(frozen=True)
 class HerdrEngineeringFingerprint:
     revision: str | None  # the stage helper's attestation; None when invalid or absent
@@ -85,6 +100,8 @@ class HerdrEngineeringFingerprint:
     build_gate_sha256: str | None
     build_gate_release_sha256: str | None
     python_requirements_sha256: str | None = None  # what the venv was installed from, if pinned
+    fabric_env_duplicates: tuple[str, ...] = ()  # managed fabric.env keys that appear twice
+    shim_present: bool = True
 
     @classmethod
     def from_json(cls, raw: sections.Section) -> HerdrEngineeringFingerprint:
@@ -109,6 +126,10 @@ class HerdrEngineeringFingerprint:
             ),
             python_requirements_sha256=sections.optional_text(
                 SECTION, raw, "python_requirements_sha256"
+            ),
+            fabric_env_duplicates=_duplicate_keys(raw),
+            shim_present=(
+                sections.flag(SECTION, raw, "shim_present") if "shim_present" in raw else True
             ),
         )
 
@@ -148,7 +169,9 @@ def compare_herdr_engineering(fp: Fingerprint, pins: HerdrEngineeringPins) -> li
         )
     if not found.venv_entry_present:
         differences.append(Difference("herdr-eng", "the venv entry point", "missing"))
-    if not found.shim_resolves:
+    # A present shim that the login shell cannot find at all is a PATH setup apply cannot fix: a
+    # note (herdr_engineering_notes). A missing shim, or another binary winning, is drift.
+    if not found.shim_resolves and not (found.shim_present and found.resolved_path is None):
         differences.append(
             Difference("path herdr-eng", found.shim_path, found.resolved_path or "not found")
         )
@@ -188,6 +211,19 @@ def _fabric_env_differences(
         elif want is None and key == CONTROL_PLANE_URL_KEY and have is not None:
             # Removed from the config: apply deletes the line, so a leftover one is drift.
             out.append(Difference("fabric.env", f"no {key}", _env_line(key, have)))
+    for key in found.fabric_env_duplicates:
+        out.append(Difference("fabric.env", f"exactly one {key} line", "several"))
     if found.fabric_env_mode is not None and found.fabric_env_mode != ENV_MODE:
         out.append(Difference("fabric.env mode", ENV_MODE, found.fabric_env_mode))
     return out
+
+
+def herdr_engineering_notes(fp: Fingerprint) -> list[str]:
+    """Informational lines about herdr-eng that never make a host drift."""
+    raw = fp.sections.get(SECTION)
+    if raw is None:
+        return []
+    found = HerdrEngineeringFingerprint.from_json(raw)
+    if found.shim_present and found.resolved_path is None:
+        return [path_not_on_path_note("herdr-eng", found.shim_path)]
+    return []

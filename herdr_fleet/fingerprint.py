@@ -30,6 +30,13 @@ class Difference:
         return f"{self.field}: expected {self.expected}, found {self.actual}"
 
 
+def path_not_on_path_note(name: str, path: str) -> str:
+    return (
+        f"{name} is installed at {path} but a login shell does not find it on PATH; add its "
+        "directory to PATH (not managed by herdr-fleet)"
+    )
+
+
 @dataclass(frozen=True)
 class CliFingerprint:
     version: str | None

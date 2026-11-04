@@ -7,6 +7,7 @@ The release comes from a real git repository at a ``file://`` URL; ``venv`` and 
 from __future__ import annotations
 
 import hashlib
+import shutil
 import stat
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from herdr_fleet.herdr_engineering import (
     HerdrEngineeringFingerprint,
     HerdrEngineeringPins,
     compare_herdr_engineering,
+    herdr_engineering_notes,
 )
 from herdr_fleet.report import ParsedEvents, parse_events
 from herdr_fleet.runner import Mode, run_playbook
@@ -368,6 +370,30 @@ def test_a_missing_fabric_env_is_named(
     assert f"fabric.env: expected HERDR_ENGINEERING_FABRIC_URL={GATEWAY}, found missing" in found
 
 
+def test_a_duplicated_fabric_env_key_is_drift_and_apply_leaves_exactly_one_line(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    key = "HERDR_ENGINEERING_FABRIC_URL"
+    # The first line is right (what a naive "first match" check reads); a later one differs.
+    env_file(tmp_path).write_text(
+        f"{key}={GATEWAY}\nOTHER=kept\n{key}=https://stale.example.com\n"
+        "HERDR_ENGINEERING_CONTROL_PLANE_URL=https://a.example.com\n"
+        "HERDR_ENGINEERING_CONTROL_PLANE_URL=https://b.example.com\n"
+    )
+    found = messages(verify(tmp_path, source, monkeypatch), source)
+    assert f"fabric.env: expected exactly one {key} line, found several" in found
+    assert any("CONTROL_PLANE_URL line" in m for m in found)
+    pending = changed(converge(tmp_path, source, Mode.CHECK, monkeypatch))
+    assert pending  # check and apply agree that something is owed
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    text = env_file(tmp_path).read_text()
+    assert text.count(f"{key}=") == 1 and f"{key}={GATEWAY}\n" in text
+    assert "CONTROL_PLANE_URL" not in text and "OTHER=kept\n" in text
+    assert messages(verify(tmp_path, source, monkeypatch), source) == []
+    assert changed(converge(tmp_path, source, Mode.APPLY, monkeypatch)) == []
+
+
 def test_a_loosened_fabric_env_mode_is_named(
     tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -492,3 +518,27 @@ def test_removing_the_control_plane_url_is_drift_and_apply_removes_the_stale_lin
     text = env_file(tmp_path).read_text()
     assert "CONTROL_PLANE" not in text and "OTHER=kept\n" in text
     assert messages(verify(tmp_path, source, monkeypatch), source) == []
+
+
+def test_a_login_shell_without_local_bin_on_path_is_a_note_not_perpetual_drift(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    # No profile adds ~/.local/bin: apply cannot fix that, so verify must not call it drift.
+    events = converge(tmp_path, source, Mode.VERIFY, monkeypatch)
+    fp = events.fingerprints["h"]
+    assert compare_herdr_engineering(fp, pins_for(source)) == []
+    (note,) = herdr_engineering_notes(fp)
+    assert "herdr-eng" in note and "PATH" in note
+
+
+def test_verify_writes_no_bytecode_into_the_venv(
+    tmp_path: Path, source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    converge(tmp_path, source, Mode.APPLY, monkeypatch)
+    venv = tmp_path / ".venvs/herdr-engineering"
+    for cache in venv.rglob("__pycache__"):
+        shutil.rmtree(cache)
+    verify(tmp_path, source, monkeypatch)
+    converge(tmp_path, source, Mode.CHECK, monkeypatch)
+    assert list(venv.rglob("*.pyc")) == []

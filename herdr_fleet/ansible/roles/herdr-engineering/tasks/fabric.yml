@@ -9,6 +9,30 @@
     state: directory
     mode: "0700"
 
+# lineinfile replaces only the last of several matching lines and the fingerprint reads the first,
+# so a duplicated managed key is first removed everywhere (only then, to stay idempotent) and then
+# written once below: exactly one line, and check and apply agree.
+- name: fabric.env current contents
+  ansible.builtin.slurp:
+    src: "{{ herdr_engineering_env_file }}"
+  register: herdr_engineering_env_current
+  failed_when: false
+  check_mode: false
+
+- name: fabric.env duplicated keys removed
+  ansible.builtin.lineinfile:
+    path: "{{ herdr_engineering_env_file }}"
+    regexp: "^{{ item }}="
+    state: absent
+  loop:
+    - HERDR_ENGINEERING_FABRIC_URL
+    - HERDR_ENGINEERING_CONTROL_PLANE_URL
+  when: >-
+    herdr_engineering_env_current.content is defined
+    and (herdr_engineering_env_current.content | b64decode).splitlines()
+    | select('match', '^' ~ item ~ '=') | list | length > 1
+  register: herdr_engineering_env_dedupe
+
 - name: fabric.env fabric URL
   ansible.builtin.lineinfile:
     path: "{{ herdr_engineering_env_file }}"
@@ -84,4 +108,5 @@
           {{ 'restarted' if (herdr_engineering_unit_result is changed
           or herdr_engineering_env_url is changed
           or herdr_engineering_env_control is changed
+          or herdr_engineering_env_dedupe is changed
           or herdr_engineering_staged is changed) else 'started' }}

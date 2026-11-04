@@ -8,6 +8,12 @@
   register: fp_herdr_engineering_entry
   check_mode: false
 
+- name: herdr-eng shim
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_shim }}"
+  register: fp_herdr_engineering_shim
+  check_mode: false
+
 - name: herdr-eng --version
   ansible.builtin.command:
     argv: ["{{ herdr_engineering_entry }}", --version]
@@ -16,6 +22,8 @@
   failed_when: false
   changed_when: false
   check_mode: false
+  environment:
+    PYTHONDONTWRITEBYTECODE: "1"
 
 # A bash login shell (bash -l, no TTY) with a clean environment: what a service or a job would
 # see. Profile scripts may print anything, so the answer is the RESOLVED= marker line only.
@@ -109,6 +117,18 @@
       {{ 'unmanaged' if not herdr_engineering_systemd_user
       else ('active' if (fp_herdr_engineering_active.stdout | trim) == 'active' else 'inactive') }}
 
+# A managed key that appears twice is drift: systemd reads the last assignment, a first-match
+# reader sees the first, and apply converges to exactly one line.
+- name: fabric.env keys that appear more than once
+  ansible.builtin.set_fact:
+    fp_herdr_engineering_env_duplicate_keys: >-
+      {{ (['HERDR_ENGINEERING_FABRIC_URL']
+      if (fp_herdr_engineering_env_text.splitlines()
+      | select('match', '^HERDR_ENGINEERING_FABRIC_URL=') | list | length) > 1 else [])
+      + (['HERDR_ENGINEERING_CONTROL_PLANE_URL']
+      if (fp_herdr_engineering_env_text.splitlines()
+      | select('match', '^HERDR_ENGINEERING_CONTROL_PLANE_URL=') | list | length) > 1 else []) }}
+
 - name: record herdr-engineering
   ansible.builtin.set_fact:
     fleet_fingerprint: >-
@@ -121,9 +141,11 @@
       'herdr_eng_version': (fp_herdr_engineering_version_text if fp_herdr_engineering_version_text | length > 0 else None),
       'venv_entry_present': fp_herdr_engineering_entry.stat.exists,
       'shim_path': herdr_engineering_shim,
+      'shim_present': fp_herdr_engineering_shim.stat.exists,
       'resolved_path': (fp_herdr_engineering_resolved_path if fp_herdr_engineering_resolved_path | length > 0 else None),
       'fabric_env_url': (fp_herdr_engineering_env_text.splitlines() | select('match', '^HERDR_ENGINEERING_FABRIC_URL=') | map('regex_replace', '^[^=]*=', '') | list | first | default(none)),
       'fabric_env_control_plane_url': (fp_herdr_engineering_env_text.splitlines() | select('match', '^HERDR_ENGINEERING_CONTROL_PLANE_URL=') | map('regex_replace', '^[^=]*=', '') | list | first | default(none)),
+      'fabric_env_duplicates': fp_herdr_engineering_env_duplicate_keys,
       'fabric_env_mode': (fp_herdr_engineering_env_stat.stat.mode if fp_herdr_engineering_env_stat.stat.exists else None),
       'fabric_unit_present': fp_herdr_engineering_unit.content is defined,
       'fabric_unit_matches_release': fp_herdr_engineering_unit_ok | bool,

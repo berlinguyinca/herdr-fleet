@@ -8,7 +8,7 @@ from typing import cast
 
 from herdr_fleet import sections
 from herdr_fleet.config import FleetLock
-from herdr_fleet.fingerprint import Difference, Fingerprint
+from herdr_fleet.fingerprint import Difference, Fingerprint, path_not_on_path_note
 
 SECTION = "herdr"
 
@@ -84,6 +84,20 @@ def compare_herdr(fp: Fingerprint, pins: HerdrPins) -> list[Difference]:
         differences.append(
             Difference("herdr binary", f"sha256 {expected_sha}", found.sha256 or "unreadable")
         )
-    if found.present and not found.resolves_to_installed:
-        differences.append(Difference("path herdr", found.path, found.resolved_path or "not found"))
+    # Not on the login shell's PATH at all (for example ~/.local/bin is not on it) is a PATH setup
+    # that apply cannot fix, so it is a note (herdr_notes), not drift. A different binary winning
+    # the lookup is drift.
+    if found.present and found.resolved_path is not None and not found.resolves_to_installed:
+        differences.append(Difference("path herdr", found.path, found.resolved_path))
     return differences
+
+
+def herdr_notes(fp: Fingerprint) -> list[str]:
+    """Informational lines about herdr that never make a host drift."""
+    raw = fp.sections.get(SECTION)
+    if raw is None:
+        return []
+    found = HerdrFingerprint.from_json(raw)
+    if found.present and found.resolved_path is None:
+        return [path_not_on_path_note("herdr", found.path)]
+    return []

@@ -11,6 +11,7 @@ from herdr_fleet.herdr import (
     HerdrFingerprint,
     HerdrPins,
     compare_herdr,
+    herdr_notes,
     herdr_pins,
 )
 from herdr_fleet.pins import fleet_pins
@@ -90,9 +91,12 @@ def test_command_resolving_elsewhere_is_reported(pins: HerdrPins) -> None:
     assert diff == Difference("path herdr", BIN, "/usr/local/bin/herdr")
 
 
-def test_command_not_found_is_reported(pins: HerdrPins) -> None:
-    (diff,) = compare_herdr(fingerprint(section(resolved_path=None)), pins)
-    assert diff == Difference("path herdr", BIN, "not found")
+def test_command_not_on_path_is_a_note_not_drift(pins: HerdrPins) -> None:
+    fp = fingerprint(section(resolved_path=None))
+    assert compare_herdr(fp, pins) == []
+    (note,) = herdr_notes(fp)
+    assert BIN in note and "PATH" in note
+    assert herdr_notes(fingerprint(section())) == []
 
 
 def test_platform_without_a_lock_checksum_is_a_difference(pins: HerdrPins) -> None:

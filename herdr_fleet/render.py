@@ -20,6 +20,9 @@ def _role_lines(role: RoleResult) -> list[str]:
             f"      - {c.task}" + (f" ({c.detail})" if c.detail else "")
             for c in role.pending_changes
         )
+    if role.notes:
+        lines.append("    notes:")
+        lines.extend(f"      - {n}" for n in role.notes)
     if role.errors:
         lines.append("    errors:")
         lines.extend(f"      - {e}" for e in role.errors)

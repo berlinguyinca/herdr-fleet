@@ -11,8 +11,8 @@ from typing import cast
 
 from herdr_fleet.baseline import compare_baseline
 from herdr_fleet.fingerprint import Difference, Fingerprint, FingerprintError, compare
-from herdr_fleet.herdr import compare_herdr
-from herdr_fleet.herdr_engineering import compare_herdr_engineering
+from herdr_fleet.herdr import compare_herdr, herdr_notes
+from herdr_fleet.herdr_engineering import compare_herdr_engineering, herdr_engineering_notes
 from herdr_fleet.inventory import IMPLEMENTED_ROLES
 from herdr_fleet.pi_runtime import compare_pi_runtime
 from herdr_fleet.pins import FleetPins
@@ -66,6 +66,13 @@ def expects_fingerprint(roles: Sequence[str]) -> bool:
     return any(role in IMPLEMENTED_ROLES for role in roles)
 
 
+# Informational lines per role: shown, never drift.
+ROLE_NOTES: Mapping[str, Callable[[Fingerprint], list[str]]] = {
+    "herdr": herdr_notes,
+    "herdr-engineering": herdr_engineering_notes,
+}
+
+
 class RoleStatus(StrEnum):
     OK = "ok"
     DRIFT = "drift"
@@ -103,10 +110,12 @@ class RoleResult:
     differences: tuple[Difference, ...] = ()
     pending_changes: tuple[PendingChange, ...] = ()
     errors: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, object]:
         return {
             "role": self.role,
+            "notes": list(self.notes),
             "status": self.status.value,
             "differences": [
                 {"field": d.field, "expected": d.expected, "actual": d.actual, "message": d.message}
@@ -208,7 +217,10 @@ def _task_event(event: Mapping[str, object]) -> TaskEvent:
 
 
 def _role_result(
-    role: str, events: Sequence[TaskEvent], differences: Sequence[Difference]
+    role: str,
+    events: Sequence[TaskEvent],
+    differences: Sequence[Difference],
+    notes: Sequence[str] = (),
 ) -> RoleResult:
     errors = tuple(f"{e.task}: {e.msg}" for e in events if e.status in _BROKEN)
     pending = tuple(
@@ -220,7 +232,7 @@ def _role_result(
         status = RoleStatus.DRIFT
     else:
         status = RoleStatus.OK
-    return RoleResult(role, status, tuple(differences), pending, errors)
+    return RoleResult(role, status, tuple(differences), pending, errors, tuple(notes))
 
 
 def _host_report(
@@ -242,7 +254,11 @@ def _host_report(
             continue
         comparator = comparators.get(role)
         differences = comparator(fingerprint, pins) if fingerprint and comparator else []
-        results.append(_role_result(role, [e for e in events if e.role == role], differences))
+        note_fn = ROLE_NOTES.get(role)
+        notes = note_fn(fingerprint) if fingerprint and note_fn else []
+        results.append(
+            _role_result(role, [e for e in events if e.role == role], differences, notes)
+        )
     broken = errors or any(r.status is RoleStatus.FAILED for r in results)
     if expect_fingerprint and fingerprint is None and not broken and expects_fingerprint(roles):
         errors.append("no fingerprint was reported for this host")

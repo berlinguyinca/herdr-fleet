@@ -12,6 +12,7 @@ from herdr_fleet.herdr_engineering import (
     HerdrEngineeringFingerprint,
     HerdrEngineeringPins,
     compare_herdr_engineering,
+    herdr_engineering_notes,
     herdr_engineering_pins,
 )
 from herdr_fleet.pins import fleet_pins
@@ -131,7 +132,15 @@ def test_command_resolving_elsewhere_or_nowhere_is_reported(pins: HerdrEngineeri
         fingerprint(section(resolved_path="/usr/local/bin/herdr-eng")), pins
     )
     assert elsewhere == Difference("path herdr-eng", SHIM, "/usr/local/bin/herdr-eng")
-    (nowhere,) = compare_herdr_engineering(fingerprint(section(resolved_path=None)), pins)
+    # present shim that no login shell finds: a PATH note, not drift
+    fp = fingerprint(section(resolved_path=None))
+    assert compare_herdr_engineering(fp, pins) == []
+    (note,) = herdr_engineering_notes(fp)
+    assert SHIM in note and "PATH" in note
+    # missing shim: drift
+    (nowhere,) = compare_herdr_engineering(
+        fingerprint(section(resolved_path=None, shim_present=False)), pins
+    )
     assert nowhere.message == f"path herdr-eng: expected {SHIM}, found not found"
 
 
