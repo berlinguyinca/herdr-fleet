@@ -96,15 +96,18 @@ def messages(**over: object) -> list[str]:
 
 
 def stray(home: Path) -> list[str]:
-    """Every path in the throwaway HOME other than ansible's own scratch directory.
+    """Every path in the throwaway HOME other than ansible's own scratch directories.
 
-    ``.ansible`` is where ansible keeps its per-user temporary files; nothing else may appear.
-    Asserting ``stray(home) == []`` makes a failure list exactly which entries were created.
+    ``.ansible`` is where ansible keeps its per-user temporary files. ``.rpmdb`` is created by the
+    rpm library when ansible's own fact gathering (``setup``) runs on a host that has rpm installed,
+    as the GitHub runner does; the baseline role never calls rpm (it probes with ``dpkg-query``).
+    Nothing else may appear. Asserting ``stray(home) == []`` makes a failure list exactly which
+    entries were created.
     """
     return sorted(
         f"{p.relative_to(home)}{'/' if p.is_dir() else ''}"
         for p in home.rglob("*")
-        if p.relative_to(home).parts[0] != ".ansible"
+        if p.relative_to(home).parts[0] not in {".ansible", ".rpmdb"}
     )
 
 
