@@ -57,14 +57,16 @@ def python_requirements(lock: FleetLock, name: str) -> PythonRequirements | None
     if digest != entry["sha256"]:
         raise ConfigError(
             [
-                f"{where}.sha256: {path.name} has sha256 {digest}, the lock says {entry['sha256']}; "
+                f"{where}.sha256: {path.name} has sha256 {digest}, "
+                f"the lock says {entry['sha256']}; "
                 "update the lock's sha256 after reviewing the file"
             ]
         )
     if HASH_MARKER.encode() not in raw:
         raise ConfigError(
             [
-                f"{where}.file: {path.name} contains no {HASH_MARKER} entries; it must be generated "
+                f"{where}.file: {path.name} contains no {HASH_MARKER} entries; "
+                "it must be generated "
                 "with --generate-hashes so pip --require-hashes can verify every package"
             ]
         )
