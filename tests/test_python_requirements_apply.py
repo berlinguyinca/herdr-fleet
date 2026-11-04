@@ -61,7 +61,8 @@ def pinned(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyP
     text = hashed_requirements(wheels, dep)
     reqs = base / "he.requirements.txt"
     reqs.write_text(text)
-    source = make_source(base / "src", release_needing("fleetdep==1.0.0"))
+    # any 1.x/2.x: the requirements file, not the release, pins the exact version
+    source = make_source(base / "src", release_needing("fleetdep>=1.0.0"))
     return Pinned(source, reqs, text, wheels)
 
 
