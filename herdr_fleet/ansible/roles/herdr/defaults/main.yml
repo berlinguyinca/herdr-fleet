@@ -1,0 +1,13 @@
+---
+# Where herdr lives. The binary is a real file at ~/.local/bin/herdr (what upstream's installer
+# writes), installed from a checksum-verified cache so rolling back to a cached version needs no
+# network. The role never stops, restarts or updates a running herdr server.
+herdr_home: "{{ ansible_facts.env.HOME }}"
+herdr_prefix: "{{ herdr_home }}/.local/share/herdr-fleet/herdr"
+herdr_cache_dir: "{{ herdr_prefix }}/cache"
+herdr_bin_dir: "{{ herdr_home }}/.local/bin"
+herdr_bin: "{{ herdr_bin_dir }}/herdr"
+herdr_release_base_url: https://github.com/herdrdev/herdr/releases/download
+
+# Supplied from fleet.lock by herdr-fleet (extra-vars), never defaulted here:
+#   herdr_version, herdr_sha256 (platform -> sha256), herdr_assets (platform -> asset name)

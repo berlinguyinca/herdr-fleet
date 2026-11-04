@@ -20,8 +20,9 @@
 
 - name: record
   ansible.builtin.set_fact:
-    fleet_fingerprint:
-      system: "{{ ansible_facts.system }}"
-      machine: "{{ ansible_facts.architecture }}"
-      node_version: "{{ fp_node.stdout | trim | regex_replace('^v', '') if fp_node.rc == 0 else None }}"
-      clis: "{{ fp_clis }}"
+    fleet_fingerprint: >-
+      {{ fleet_fingerprint | default({}) | combine({
+      'system': ansible_facts.system,
+      'machine': ansible_facts.architecture,
+      'node_version': (fp_node.stdout | trim | regex_replace('^v', '') if fp_node.rc == 0 else None),
+      'clis': fp_clis}) }}

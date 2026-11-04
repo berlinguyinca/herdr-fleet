@@ -1,0 +1,49 @@
+---
+# Read-only: what the stage helper attests about the installed release. The helper's --describe
+# is offline by design. No helper on the host (never applied) means nothing is attested.
+- name: staging helper present
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_helper }}"
+  register: herdr_engineering_helper_stat
+  check_mode: false
+
+- name: attest the staged herdr-engineering release
+  ansible.builtin.command:
+    argv:
+      - "{{ herdr_engineering_python }}"
+      - "{{ herdr_engineering_helper }}"
+      - --kind
+      - herdr
+      - --describe
+      - --home
+      - "{{ herdr_engineering_home }}"
+  register: herdr_engineering_describe
+  when: herdr_engineering_helper_stat.stat.exists
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  environment:
+    PYTHONDONTWRITEBYTECODE: "1"
+
+- name: read the attestation
+  ansible.builtin.set_fact:
+    herdr_engineering_attested: >-
+      {{ (herdr_engineering_describe.stdout | from_json).revision
+      if (herdr_engineering_describe.rc | default(1)) == 0 else '' }}
+    herdr_engineering_attested_root: >-
+      {{ (herdr_engineering_describe.stdout | from_json).sourceRoot
+      if (herdr_engineering_describe.rc | default(1)) == 0 else '' }}
+
+# What the venv was last installed from: the sha256 stage_release.py wrote after a pinned install.
+- name: requirements the venv was installed from
+  ansible.builtin.slurp:
+    src: "{{ herdr_engineering_requirements_marker }}"
+  register: herdr_engineering_marker
+  failed_when: false
+  check_mode: false
+
+- name: read the requirements marker
+  ansible.builtin.set_fact:
+    herdr_engineering_installed_requirements: >-
+      {{ (herdr_engineering_marker.content | b64decode | trim)
+      if herdr_engineering_marker.content is defined else '' }}

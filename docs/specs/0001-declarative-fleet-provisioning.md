@@ -1,6 +1,7 @@
 # 0001 — Declarative fleet provisioning and the single update path
 
-Status: proposed
+Status: proposed. Slices 1 to 3 are implemented (see Slices); slice 3's plan is
+[0002](../plans/0002-slice-3-installers.md)
 
 ## Goal
 
@@ -28,7 +29,7 @@ Exact pins for everything the fleet runs. No ranges, no `main`.
 |---|---|
 | Node | exact version + per-platform checksum |
 | herdr | exact version + per-platform checksum |
-| herdr-engineering, pi-engineering, autospec | full commit ID |
+| herdr-engineering, pi-engineering, autospec | full commit ID. The commit pins the source only: the Python dependencies pip resolves for herdr-engineering are not pinned or hashed (see `docs/follow-ups/python-dependencies-are-not-pinned.md`); the npm dependencies of pi-engineering are pinned by its `package-lock.json` through `npm ci` |
 | global CLIs (Pi CLI, Codex, gitleaks, woodpecker-cli) | exact version |
 | container images (Woodpecker server/agent, control plane, fabric stack) | image digest |
 | herdr-fleet itself | exact version; the controller re-execs from the pin |
@@ -57,11 +58,11 @@ its pins in `fleet.lock`. Roles are idempotent and support `--check`.
 
 | Role | Provides |
 |---|---|
-| `baseline` | OS packages, state/config directories, Tailscale presence check |
+| `baseline` | OS packages (Debian/Ubuntu only; on macOS nothing is installed and `baseline.extra_packages` are ignored), state/config directories, linger, Tailscale presence (informational). The only role that may use root (package-index refresh, package install and linger; each is checked beforehand with `sudo -n -l -- <command>` and then run as exactly `sudo -n -- <command>`, never through `become`); probes and check mode never do. Without usable root it fails naming the exact `sudo` command to run once |
 | `toolchain` | Node and global CLIs in a managed prefix, independent of any user's nvm default |
-| `herdr` | pinned herdr with checksum verification |
-| `herdr-engineering` | the `herdr-eng` venv, fabric agent, build gate |
-| `pi-runtime` | pinned pi-engineering staging (activation stays with the rollout coordinator) |
+| `herdr` | pinned herdr release binary, sha256-verified before it is installed to `~/.local/bin/herdr`; never starts, restarts or updates a running server |
+| `herdr-engineering` | the `herdr-eng` venv from a pinned commit (staged by the vendored release stager), shim, `fabric.env`, fabric agent unit, build gate |
+| `pi-runtime` | pinned pi-engineering **staging only**: write-once release directory, dependencies, registration in Pi's `settings.json`. It never reloads, restarts or signals Pi and never deletes an older release; activation stays with the rollout coordinator |
 | `secret-scan` | gitleaks, global pre-commit/pre-push hooks, shared policy |
 | `controller` | `herdr-fleet` itself, the update timer, the plan/apply state |
 | `gateway` | control-plane and fabric-stack compose projects, as containers pinned by digest |
@@ -169,9 +170,13 @@ vault, enrolls the controller, and runs `plan`.
 
 ## Slices
 
-1. Schemas (`fleet.lock`, `fleet-config`), loader, `plan` skeleton, CI.
-2. `toolchain` role + fingerprint + check-mode drift (fixes the Node/Pi-CLI drift).
-3. `herdr`, `herdr-engineering`, `pi-runtime`, `baseline` roles with real installers and checksums.
+1. Schemas (`fleet.lock`, `fleet-config`), loader, `plan` skeleton, CI. **Done.**
+2. `toolchain` role + fingerprint + check-mode drift (fixes the Node/Pi-CLI drift). **Done.**
+3. `herdr`, `herdr-engineering`, `pi-runtime`, `baseline` roles with real installers. Node and herdr
+   are checksum-verified; npm dependencies are locked by `package-lock.json`; the Python dependencies
+   of herdr-engineering are not pinned (a documented gap). **Done.**
+   Not covered by automated tests, hence a manual canary on one real host before the lock is rolled
+   out: systemd user units and linger, and macOS.
 4. Staggered, session-aware `apply`; verify; rollback; notifications.
 5. `secret-scan` role (gitleaks, hooks, policy).
 6. `ci-server` / `ci-agent` roles and declarative Woodpecker state.

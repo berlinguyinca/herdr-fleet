@@ -1,0 +1,18 @@
+---
+# Read-only. Reports packages, directories, Tailscale, Python and linger without privileges.
+- name: probe the baseline
+  ansible.builtin.include_tasks: probe.yml
+
+- name: record baseline
+  ansible.builtin.set_fact:
+    fleet_fingerprint: >-
+      {{ fleet_fingerprint | default({}) | combine({
+      'system': ansible_facts.system,
+      'machine': ansible_facts.architecture,
+      'baseline': {
+      'user': baseline_user,
+      'packages': baseline_package_state,
+      'dirs': baseline_dir_state,
+      'tailscale': baseline_tailscale_state,
+      'python3_version': baseline_python_version,
+      'linger': baseline_linger}}) }}

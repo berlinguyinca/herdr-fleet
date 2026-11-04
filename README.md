@@ -2,9 +2,9 @@
 
 Reproducible, updateable provisioning for a herdr-engineering fleet.
 
-**Status: slice 2.** Schemas, loader, `plan`, the `toolchain` role, `plan --check` (drift
-report) and a minimal `apply` exist. Other roles are reported as `not-implemented` and are
-skipped. The design is in
+**Status: slice 3.** Schemas, loader, `plan`, the `baseline`, `toolchain`, `herdr`,
+`herdr-engineering` and `pi-runtime` roles, `plan --check` (drift report) and a minimal `apply`
+exist. Other roles are reported as `not-implemented` and are skipped. The design is in
 [docs/specs/0001-declarative-fleet-provisioning.md](docs/specs/0001-declarative-fleet-provisioning.md).
 
 ## Install
@@ -56,10 +56,25 @@ command line.
 pending change without downloading the archive, so a wrong `sha256` in `fleet.lock` or an
 unreachable mirror only surfaces on `apply` (the download is checksum-verified there).
 
+What "never touches the network" and "changes nothing" mean exactly: check mode downloads, clones
+and installs nothing and writes no managed file, directory or setting on the host. It does run
+read-only probes on the host: file reads and hashes, `--version` of installed binaries, `dpkg-query`,
+`systemctl --user show`, and for the staged releases the local `git rev-parse HEAD` and
+`git status --porcelain --untracked-files=all` (run with `GIT_OPTIONAL_LOCKS=0` so they take no
+`index.lock`; a test shows the index file is byte-identical afterwards) plus
+`stage_release.py --describe`, which is offline. The probes that run Python on the host set
+`PYTHONDONTWRITEBYTECODE=1`, so they leave no `.pyc` files in a venv. A pending change is reported
+from those reads alone.
+
 Each host also reports a fingerprint (os/arch, managed Node version, CLI versions, shim path,
 what `command -v pi` resolves to in a clean-environment bash login shell (`bash -lc`, no TTY;
 only a marker line of its output is read, so profile banners cannot cause drift), and whether
 that is the shim).
+
+If `herdr` or `herdr-eng` is installed but a login shell cannot find it on `PATH` at all (for
+example `~/.local/bin` is not on it), that is a PATH setup `apply` cannot fix: the report shows an
+informational `notes:` line for the role and the host is not drifted. A different binary winning
+the lookup, or a missing install, is still drift.
 
 ### Toolchain role
 
@@ -70,6 +85,61 @@ that prefix, and writes POSIX `sh` shims `~/.local/bin/pi` and `~/.local/bin/cod
 managed bin first on `PATH` and then exec the real CLI. Changing the shell's default Node
 (nvm, etc.) therefore cannot make `pi` vanish. `node` itself is deliberately not shimmed.
 `gitleaks` and `woodpecker-cli` are out of scope for this slice.
+
+### Other roles (slice 3)
+
+- **`herdr`** (no root): downloads the pinned herdr release asset, verifies its sha256 from
+  `fleet.lock` (`herdr.sha256.<platform>`, the `digest` of each GitHub release asset) before
+  installing, and installs a real file `~/.local/bin/herdr` (0755). A wrong checksum fails before
+  anything is installed. It never starts, restarts or updates a running herdr server; a stale
+  server is reported informationally only.
+- **`herdr-engineering`** (no root): stages the pinned commit with the vendored release stager
+  into a write-once release directory, builds the `herdr-eng` venv, links `~/.local/bin/herdr-eng`,
+  writes `~/.config/herdr-engineering/fabric.env` (0600, from `services.gateway.url`, plus
+  `services.control_plane.url` only when set; a duplicated managed key is drift and apply leaves
+  exactly one line), renders the fabric agent unit and installs the Pi
+  build gate. The service is only managed when a systemd user manager exists. Needs Python 3.12 or
+  newer (`python3` on the target's `PATH`).
+- **`pi-runtime`** (no root): **staging only**. Puts the pinned pi-engineering commit on disk,
+  installs its dependencies with the managed toolchain's `npm`, and registers the release in
+  `~/.pi/agent/settings.json` (other settings are preserved). It never reloads, restarts or
+  signals Pi, never touches missions and never deletes an older release; activation belongs to
+  the rollout coordinator. Only an entry for the same clone URL, an `npm:pi-engineering-runtime`
+  entry, or a local path under the managed release root
+  (`~/.local/share/herdr-engineering/pi/releases`) is repointed to the staged release; a local
+  checkout registered from anywhere else (for example a developer's working copy) is never
+  rewritten, so the staged release is registered next to it and the operator removes whichever
+  entry they do not want. The existing mode of `settings.json` is kept. A `settings.json` that is not a JSON object with a `packages` list is reported as drift
+  (`pi-runtime settings`), never overwritten. A failing git, npm or pip
+  command prints its own error output (last 40 lines) and the stager exits 1. Rollout revisions must equal `repos.pi-engineering`.
+- **`baseline`**: required packages (`git curl ca-certificates python3 python3-venv xz-utils`) plus
+  `baseline.extra_packages` from the config (Debian and Ubuntu only: on macOS the role installs
+  nothing, so `extra_packages` are ignored there), the state/config directories, linger and an
+  informational Tailscale probe. **It is the only role that may use root**, and only for package
+  installation and enabling linger. Probes and `plan --check` never need root or a password. When
+  root is needed and unavailable, apply fails with the exact command to run once, for example
+  `sudo apt-get install -y jq`.
+
+`herdr-engineering` needs `services.gateway.url` and the `herdr` role on the same host;
+`pi-runtime` needs `toolchain` on the same host.
+
+Repository clone URLs are pinned in the lock's optional `repo_urls` (`herdr-engineering`,
+`pi-engineering`, `autospec`; HTTPS only). They have no built-in defaults: a URL change is a trust
+change, so a role that clones a repository fails naming the missing key.
+
+Python dependencies of `herdr-engineering` can be pinned with the lock's optional
+`python_requirements.herdr-engineering` (`file`: a hashed requirements file shipped next to the
+lock; `sha256`: its checksum). The stager and the role then run `pip install --require-hashes -r`
+and `pip install --no-deps` (then `pip check`; a broken dependency set fails), the fingerprint reports the checksum and `plan --check` names a
+mismatch. The file must contain at least one requirement and every requirement line must carry
+`--hash=sha256:` (`-r`, `-c` and `-e` are refused). A changed requirements file rebuilds the venv
+so dropped packages disappear. Without the field nothing changes and `plan` prints the note "unpinned python
+dependencies". First understood by herdr-fleet 0.1.0. See
+`docs/follow-ups/python-dependencies-are-not-pinned.md` for what remains.
+
+Not automated: systemd user units and linger (systemd cannot run as PID 1 in the harness without `--privileged`; see `docs/testing.md`) and macOS.
+Run `plan --check` and `apply` once on a real Debian host and a real Mac as a manual canary before
+rolling a lock to the fleet.
 
 ### Apply
 
@@ -99,7 +169,7 @@ either provision a server here or point at an existing one.
 scripts/ci.sh    # ruff, pytest with >=80% branch coverage, example validation, container tests if docker exists
 ```
 
-Container tests (real Node and npm downloads, so network is needed) run in Docker and in
+Container tests (real Node, npm and herdr downloads and clones of public repositories, so network is needed) run in Docker and in
 Apptainer, never against your home directory:
 
 ```bash

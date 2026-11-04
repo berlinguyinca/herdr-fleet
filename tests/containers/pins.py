@@ -21,3 +21,17 @@ DECOY_NODE_SHA256 = {
     "linux-x64": "315046739a513a70e03a4a55a8afda8cf979f30852e576075c340084e3f8ac0f",
     "linux-arm64": "d462267863ae8ee556039ebdf559055a8ec562c633889ef1403f3adb449ba1dd",
 }
+
+# herdr 0.9.2: a second real release, for "binary replaced by a different release" drift.
+# sha256 from the asset "digest" of https://api.github.com/repos/herdrdev/herdr/releases (v0.9.2).
+ALT_HERDR_VERSION = "0.9.2"
+ALT_HERDR_ASSET = {"linux-x64": "herdr-linux-x86_64", "linux-arm64": "herdr-linux-aarch64"}
+ALT_HERDR_SHA256 = {
+    "linux-x64": "74de34746f96236f76d599f8f5d2439f884351eabe25b7495e0edab75414064a",
+    "linux-arm64": "50ba6fe8dde5ff35af6654082d7e1a4afcb58c9ff3d22bfcf9d41445c971fcc7",
+}
+
+# Other real commits of the public repositories (newer pi-engineering, older herdr-engineering),
+# for "the pinned commit changed" drift.
+ALT_PI_ENGINEERING = "278c7468054ae7e39b55052fc1cd1c5ad6f754cc"
+ALT_HERDR_ENGINEERING = "0502a62e32d18d7f24b855cb16165be339228257"

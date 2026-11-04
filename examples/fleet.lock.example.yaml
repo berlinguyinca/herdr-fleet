@@ -14,6 +14,19 @@ repos:
   herdr-engineering: "1111111111111111111111111111111111111111"
   pi-engineering: "2222222222222222222222222222222222222222"
   autospec: "3333333333333333333333333333333333333333"
+# Optional: where each repository is cloned from. A URL change is a trust change, so it lives in
+# the reviewed lock. HTTPS only, no embedded credentials. First understood by herdr-fleet 0.1.0.
+repo_urls:
+  herdr-engineering: https://git.example.com/example-org/herdr-engineering.git
+  pi-engineering: https://git.example.com/example-org/pi-engineering.git
+  autospec: https://git.example.com/example-org/autospec.git
+# Optional: a hashed requirements file (pip --require-hashes format) shipped next to this lock, with
+# its own sha256. Without it the herdr-engineering venv resolves its dependencies unpinned and
+# `plan` says so. The path is relative to this file and must stay inside its directory.
+# python_requirements:
+#   herdr-engineering:
+#     file: herdr-engineering.requirements.txt
+#     sha256: <sha256 of that file>
 clis:
   pi-cli: 1.2.3
   codex: 0.9.0

@@ -19,6 +19,12 @@ services:
     ingress: tunnel
   gateway:
     url: https://gateway.example.com
+  # Optional: written to fabric.env by herdr-engineering only when set.
+  control_plane:
+    url: https://control-plane.example.com
+# Optional operator conveniences installed by the baseline role, on top of its fixed list.
+baseline:
+  extra_packages: [vim, mc, btop]
 woodpecker:
   repos:
     - example-org/example-repo

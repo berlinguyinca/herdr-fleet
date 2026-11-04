@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import difflib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import cast
 
+from herdr_fleet.baseline import compare_baseline
 from herdr_fleet.fingerprint import Difference, Fingerprint, FingerprintError, compare
+from herdr_fleet.herdr import compare_herdr, herdr_notes
+from herdr_fleet.herdr_engineering import compare_herdr_engineering, herdr_engineering_notes
 from herdr_fleet.inventory import IMPLEMENTED_ROLES
-from herdr_fleet.toolchain import ToolchainPins
+from herdr_fleet.pi_runtime import compare_pi_runtime
+from herdr_fleet.pins import FleetPins
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -21,6 +25,52 @@ _CHANGING = {"changed", "would_change"}
 _BROKEN = {"failed", "unreachable"}
 _MAX_DIFF_PARTS = 8
 NOT_ATTEMPTED = "not attempted: the run stopped or never reached this host"
+
+
+Comparator = Callable[[Fingerprint, FleetPins], list[Difference]]
+
+
+def _compare_toolchain(fp: Fingerprint, pins: FleetPins) -> list[Difference]:
+    return compare(fp, pins.toolchain)
+
+
+def _compare_herdr(fp: Fingerprint, pins: FleetPins) -> list[Difference]:
+    return compare_herdr(fp, pins.herdr)
+
+
+def _compare_herdr_engineering(fp: Fingerprint, pins: FleetPins) -> list[Difference]:
+    return compare_herdr_engineering(fp, pins.herdr_engineering)
+
+
+def _compare_baseline(fp: Fingerprint, pins: FleetPins) -> list[Difference]:
+    return compare_baseline(fp, pins.baseline)
+
+
+def _compare_pi_runtime(fp: Fingerprint, pins: FleetPins) -> list[Difference]:
+    return compare_pi_runtime(fp, pins.pi_runtime)
+
+
+# One comparator per implemented role that reports a fingerprint section. Adding a role means
+# registering its comparator here and nothing else in this module.
+ROLE_COMPARATORS: Mapping[str, Comparator] = {
+    "toolchain": _compare_toolchain,
+    "herdr": _compare_herdr,
+    "herdr-engineering": _compare_herdr_engineering,
+    "baseline": _compare_baseline,
+    "pi-runtime": _compare_pi_runtime,
+}
+
+
+def expects_fingerprint(roles: Sequence[str]) -> bool:
+    """A host with any implemented role must report a fingerprint."""
+    return any(role in IMPLEMENTED_ROLES for role in roles)
+
+
+# Informational lines per role: shown, never drift.
+ROLE_NOTES: Mapping[str, Callable[[Fingerprint], list[str]]] = {
+    "herdr": herdr_notes,
+    "herdr-engineering": herdr_engineering_notes,
+}
 
 
 class RoleStatus(StrEnum):
@@ -60,10 +110,12 @@ class RoleResult:
     differences: tuple[Difference, ...] = ()
     pending_changes: tuple[PendingChange, ...] = ()
     errors: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, object]:
         return {
             "role": self.role,
+            "notes": list(self.notes),
             "status": self.status.value,
             "differences": [
                 {"field": d.field, "expected": d.expected, "actual": d.actual, "message": d.message}
@@ -165,7 +217,10 @@ def _task_event(event: Mapping[str, object]) -> TaskEvent:
 
 
 def _role_result(
-    role: str, events: Sequence[TaskEvent], differences: Sequence[Difference]
+    role: str,
+    events: Sequence[TaskEvent],
+    differences: Sequence[Difference],
+    notes: Sequence[str] = (),
 ) -> RoleResult:
     errors = tuple(f"{e.task}: {e.msg}" for e in events if e.status in _BROKEN)
     pending = tuple(
@@ -177,7 +232,7 @@ def _role_result(
         status = RoleStatus.DRIFT
     else:
         status = RoleStatus.OK
-    return RoleResult(role, status, tuple(differences), pending, errors)
+    return RoleResult(role, status, tuple(differences), pending, errors, tuple(notes))
 
 
 def _host_report(
@@ -185,8 +240,9 @@ def _host_report(
     roles: Sequence[str],
     events: Sequence[TaskEvent],
     fingerprint: Fingerprint | None,
-    pins: ToolchainPins,
+    pins: FleetPins,
     expect_fingerprint: bool,
+    comparators: Mapping[str, Comparator],
 ) -> HostReport:
     if not events and fingerprint is None:
         return HostReport(host, (), None, (NOT_ATTEMPTED,), attempted=False)
@@ -196,10 +252,15 @@ def _host_report(
         if role not in IMPLEMENTED_ROLES:
             results.append(RoleResult(role, RoleStatus.NOT_IMPLEMENTED))
             continue
-        differences = compare(fingerprint, pins) if fingerprint and role == "toolchain" else []
-        results.append(_role_result(role, [e for e in events if e.role == role], differences))
+        comparator = comparators.get(role)
+        differences = comparator(fingerprint, pins) if fingerprint and comparator else []
+        note_fn = ROLE_NOTES.get(role)
+        notes = note_fn(fingerprint) if fingerprint and note_fn else []
+        results.append(
+            _role_result(role, [e for e in events if e.role == role], differences, notes)
+        )
     broken = errors or any(r.status is RoleStatus.FAILED for r in results)
-    if expect_fingerprint and fingerprint is None and not broken and "toolchain" in roles:
+    if expect_fingerprint and fingerprint is None and not broken and expects_fingerprint(roles):
         errors.append("no fingerprint was reported for this host")
     return HostReport(
         host,
@@ -213,9 +274,10 @@ def _host_report(
 def build_reports(
     parsed: ParsedEvents,
     host_roles: Mapping[str, Sequence[str]],
-    pins: ToolchainPins,
+    pins: FleetPins,
     *,
     expect_fingerprint: bool = True,
+    comparators: Mapping[str, Comparator] = ROLE_COMPARATORS,
 ) -> list[HostReport]:
     return [
         _host_report(
@@ -225,6 +287,7 @@ def build_reports(
             parsed.fingerprints.get(host),
             pins,
             expect_fingerprint,
+            comparators,
         )
         for host, roles in host_roles.items()
     ]

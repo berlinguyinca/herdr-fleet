@@ -188,3 +188,146 @@ def test_chained_jump_hosts_are_rejected(tmp_path: Path) -> None:
     doc = example_config()
     _hosts(doc)["host-a"]["connection"]["jump_host"] = "host-b"  # type: ignore[index]
     _expect_error(doc, tmp_path, "hosts.host-a.connection.jump_host", "chain")
+
+
+def test_example_config_has_baseline_and_control_plane() -> None:
+    config = load_config(CONFIG_EXAMPLE)
+    assert config.baseline_extra_packages == ("vim", "mc", "btop")
+    assert config.control_plane_url == "https://control-plane.example.com"
+
+
+def test_config_without_new_optional_keys_loads(tmp_path: Path) -> None:
+    doc = example_config()
+    del doc["baseline"]
+    del _services(doc)["control_plane"]
+    config = load_config(write_yaml(tmp_path / "c.yaml", doc))
+    assert config.baseline_extra_packages == () and config.control_plane_url is None
+
+
+@pytest.mark.parametrize(
+    "package",
+    [
+        "Vim",
+        "-x",
+        "a b",
+        "a;b",
+        "",
+        "$(id)",
+        "a/b",
+        ".hidden",
+        "+x",
+        "openssh-server-",  # apt reads a trailing '-' as REMOVE
+        "openssh-server+",  # ... and a trailing '+' as an explicit install
+        "g++",
+        "vim\n",
+        "vim\nrm",
+        "--purge",
+        "vim=1.0",
+        "vim:amd64",
+        "vim/stable",
+    ],
+)
+def test_bad_extra_package_names_rejected(tmp_path: Path, package: str) -> None:
+    doc = example_config()
+    doc["baseline"] = {"extra_packages": [package]}
+    _expect_error(doc, tmp_path, "baseline.extra_packages")
+
+
+@pytest.mark.parametrize("package", ["vim", "libssl3", "python3.12", "a-b", "x+y.z"])
+def test_good_extra_package_names_accepted(tmp_path: Path, package: str) -> None:
+    doc = example_config()
+    doc["baseline"] = {"extra_packages": [package]}
+    assert load_config(write_yaml(tmp_path / "c.yaml", doc)).baseline_extra_packages == (package,)
+
+
+def test_duplicate_extra_packages_and_unknown_baseline_keys_rejected(tmp_path: Path) -> None:
+    doc = example_config()
+    doc["baseline"] = {"extra_packages": ["vim", "vim"]}
+    _expect_error(doc, tmp_path, "baseline.extra_packages")
+    doc["baseline"] = {"require_tailscale": True}
+    _expect_error(doc, tmp_path, "baseline", "require_tailscale")
+
+
+def test_bad_control_plane_url_rejected(tmp_path: Path) -> None:
+    doc = example_config()
+    _services(doc)["control_plane"] = {"url": "not a url"}
+    _expect_error(doc, tmp_path, "services.control_plane.url")
+
+
+def test_herdr_engineering_without_gateway_url_rejected(tmp_path: Path) -> None:
+    doc = example_config()
+    del _services(doc)["gateway"]
+    _expect_error(doc, tmp_path, "hosts.host-a.roles", "herdr-engineering", "services.gateway.url")
+
+
+def test_herdr_engineering_without_herdr_role_rejected(tmp_path: Path) -> None:
+    doc = example_config()
+    _hosts(doc)["host-b"]["roles"] = ["baseline", "toolchain", "herdr-engineering"]  # type: ignore[index]
+    _expect_error(doc, tmp_path, "hosts.host-b.roles", "herdr-engineering", "'herdr'")
+
+
+def test_pi_runtime_without_toolchain_rejected(tmp_path: Path) -> None:
+    doc = example_config()
+    _hosts(doc)["host-a"]["roles"] = ["baseline", "pi-runtime"]  # type: ignore[index]
+    _expect_error(doc, tmp_path, "hosts.host-a.roles", "pi-runtime", "'toolchain'")
+
+
+def test_herdr_engineering_does_not_need_toolchain(tmp_path: Path) -> None:
+    doc = example_config()
+    _hosts(doc)["host-b"]["roles"] = ["herdr", "herdr-engineering"]  # type: ignore[index]
+    assert len(load_config(write_yaml(tmp_path / "c.yaml", doc)).hosts) == 2
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gw.example.com\n",
+        "https://gw.example.com/{{ lookup('pipe','id') }}",
+        "https://gw.example.com/{%25x%25}",
+        "https://user:pw@gw.example.com",
+        "https://gw.example.com/a@b",
+        'https://gw.example.com/"x',
+        "https://gw.example.com/'x",
+        "https://gw.example.com/a\\b",
+        "https://gw.example.com/$HOME",
+        "https://gw.example.com/path?token=1",
+        "https://gw.example.com/path#fragment",
+        "https://gw.example.com/`id`",
+        "https://gw.example.com/%",  # a bare percent is not an encoding
+        "https://gw.example.com/%4",
+        "https://gw.example.com/%zz",
+        "https://gw.example.com/%{{1}}",
+        "https://gw.example.com/%24{x}",
+    ],
+)
+@pytest.mark.parametrize("key", ["gateway", "control_plane"])
+def test_service_urls_cannot_carry_templates_credentials_or_a_trailing_newline(
+    tmp_path: Path, key: str, url: str
+) -> None:
+    doc = example_config()
+    _services(doc)[key] = {"url": url}  # type: ignore[index]
+    _expect_error(doc, tmp_path, f"services.{key}.url")
+
+
+@pytest.mark.parametrize("url", ["https://gw.example.com/a%20b", "https://gw.example.com/%41%7e"])
+@pytest.mark.parametrize("key", ["gateway", "control_plane"])
+def test_strict_percent_encoding_is_accepted_because_it_is_inert_text(
+    tmp_path: Path, key: str, url: str
+) -> None:
+    doc = example_config()
+    _services(doc)[key] = {"url": url}  # type: ignore[index]
+    load_config(write_yaml(tmp_path / "c.yaml", doc))
+
+
+def test_external_url_also_rejects_a_trailing_newline_and_templates(tmp_path: Path) -> None:
+    for bad in (
+        "https://ci.example.com\n",
+        "https://ci.example.com/{{ 1 }}",
+        "https://ci.example.com/?a=1",
+        "https://ci.example.com/#x",
+        "https://ci.example.com/`id`",
+    ):
+        doc = example_config()
+        _services(doc)["ci_server"]["external_url"] = bad  # type: ignore[index]
+        _hosts(doc)["host-a"]["roles"] = ["baseline"]  # type: ignore[index]
+        _expect_error(doc, tmp_path, "services.ci_server.external_url")

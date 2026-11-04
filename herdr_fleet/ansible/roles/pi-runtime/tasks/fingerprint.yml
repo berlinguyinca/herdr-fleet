@@ -1,0 +1,63 @@
+---
+# Read-only. Reports what is staged and registered, never what a running Pi session has loaded.
+- name: probe the staged release
+  ansible.builtin.include_tasks: probe.yml
+
+- name: Pi settings
+  ansible.builtin.slurp:
+    src: "{{ pi_runtime_settings }}"
+  register: fp_pi_runtime_settings
+  failed_when: false
+  check_mode: false
+
+- name: release dependencies
+  ansible.builtin.stat:
+    path: "{{ pi_runtime_release }}/node_modules"
+  register: fp_pi_runtime_modules
+  check_mode: false
+
+# Malformed JSON must be reported as drift, not abort the host's report: validate before parsing.
+- name: Pi settings are a JSON object with a packages list
+  ansible.builtin.command:
+    argv:
+      - "{{ pi_runtime_python }}"
+      - -I
+      - -c
+      - |
+        import json, sys
+        data = json.loads(sys.stdin.read())
+        assert isinstance(data, dict) and isinstance(data.get("packages", []), list)
+    stdin: "{{ fp_pi_runtime_settings.content | b64decode }}"
+  register: fp_pi_runtime_settings_check
+  when: fp_pi_runtime_settings.content is defined
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  environment:
+    PYTHONDONTWRITEBYTECODE: "1"
+
+- name: read the Pi settings
+  ansible.builtin.set_fact:
+    fp_pi_runtime_settings_valid: >-
+      {{ fp_pi_runtime_settings.content is not defined
+      or fp_pi_runtime_settings_check.rc | default(1) == 0 }}
+    fp_pi_runtime_packages: >-
+      {{ ((fp_pi_runtime_settings.content | b64decode | from_json).packages | default([]))
+      if fp_pi_runtime_settings.content is defined
+      and fp_pi_runtime_settings_check.rc | default(1) == 0 else [] }}
+
+- name: record pi-runtime
+  ansible.builtin.set_fact:
+    fleet_fingerprint: >-
+      {{ fleet_fingerprint | default({}) | combine({
+      'system': ansible_facts.system,
+      'machine': ansible_facts.architecture,
+      'pi_runtime': {
+      'revision': (pi_runtime_attested if pi_runtime_attested | length > 0 else None),
+      'source_root': (pi_runtime_attested_root if pi_runtime_attested_root | length > 0 else None),
+      'release_path': pi_runtime_release,
+      'settings_path': pi_runtime_settings,
+      'settings_valid': fp_pi_runtime_settings_valid | bool,
+      'registered': (pi_runtime_release in (fp_pi_runtime_packages | select('string') | list
+      + fp_pi_runtime_packages | select('mapping') | map(attribute='source', default='') | list)),
+      'node_modules_present': (fp_pi_runtime_modules.stat.isdir | default(false))}}) }}

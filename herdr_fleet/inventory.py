@@ -5,12 +5,24 @@ from __future__ import annotations
 import re
 import shlex
 from collections.abc import Sequence
+from importlib import resources
 
-from herdr_fleet.config import FleetLock, Host
-from herdr_fleet.toolchain import CLI_SPECS, toolchain_pins
+from herdr_fleet.baseline import BaselinePins
+from herdr_fleet.config import FleetConfig, FleetLock, Host
+from herdr_fleet.herdr import HERDR_ASSETS, HerdrPins
+from herdr_fleet.herdr_engineering import HerdrEngineeringPins
+from herdr_fleet.pi_runtime import PiRuntimePins
+from herdr_fleet.pins import fleet_pins
+from herdr_fleet.toolchain import CLI_SPECS, ToolchainPins
 
 # Roles that have an Ansible implementation in this release; the rest are planned, not run.
-IMPLEMENTED_ROLES: tuple[str, ...] = ("toolchain",)
+IMPLEMENTED_ROLES: tuple[str, ...] = (
+    "baseline",
+    "toolchain",
+    "herdr",
+    "herdr-engineering",
+    "pi-runtime",
+)
 
 JsonObject = dict[str, object]
 
@@ -84,8 +96,7 @@ def build_inventory(hosts: Sequence[Host], *, local: bool, limit: str | None) ->
     return {"all": {"hosts": {h.name: _host_vars(h, by_name, local) for h in selected}}}
 
 
-def build_extra_vars(lock: FleetLock) -> JsonObject:
-    pins = toolchain_pins(lock)
+def _toolchain_vars(pins: ToolchainPins) -> JsonObject:
     return {
         "toolchain_node_version": pins.node_version,
         "toolchain_node_sha256": dict(pins.node_sha256),
@@ -98,4 +109,61 @@ def build_extra_vars(lock: FleetLock) -> JsonObject:
             }
             for spec in CLI_SPECS
         ],
+    }
+
+
+def _herdr_vars(pins: HerdrPins) -> JsonObject:
+    return {
+        "herdr_version": pins.version,
+        "herdr_sha256": dict(pins.sha256),
+        "herdr_assets": dict(HERDR_ASSETS),
+    }
+
+
+def _herdr_engineering_vars(pins: HerdrEngineeringPins) -> JsonObject:
+    if pins.repository is None:  # no host has the role: nothing will read these
+        return {}
+    pinned: JsonObject = {}
+    if pins.requirements_sha256 is not None:
+        pinned = {
+            "herdr_engineering_requirements_src": pins.requirements_path,
+            "herdr_engineering_requirements_sha256": pins.requirements_sha256,
+        }
+    return {
+        "herdr_engineering_revision": pins.revision,
+        "herdr_engineering_repository": pins.repository,
+        "herdr_engineering_gateway_url": pins.gateway_url,
+        "herdr_engineering_control_plane_url": pins.control_plane_url,
+        "fleet_stage_release_src": str(resources.files("herdr_fleet").joinpath("stage_release.py")),
+        **pinned,
+    }
+
+
+def _pi_runtime_vars(pins: PiRuntimePins) -> JsonObject:
+    if pins.repository is None:  # no host has the role: nothing will read these
+        return {}
+    return {
+        "pi_runtime_revision": pins.revision,
+        "pi_runtime_repository": pins.repository,
+        "fleet_stage_release_src": str(resources.files("herdr_fleet").joinpath("stage_release.py")),
+    }
+
+
+def _baseline_vars(pins: BaselinePins) -> JsonObject:
+    return {
+        "baseline_packages": list(pins.packages),
+        "baseline_macos_commands": list(pins.macos_commands),
+        "baseline_dirs": [{"path": d.path, "mode": d.mode} for d in pins.dirs],
+    }
+
+
+def build_extra_vars(lock: FleetLock, config: FleetConfig) -> JsonObject:
+    """Every role's Ansible variables; roles never read the lock or the config themselves."""
+    pins = fleet_pins(lock, config)
+    return {
+        **_baseline_vars(pins.baseline),
+        **_toolchain_vars(pins.toolchain),
+        **_herdr_vars(pins.herdr),
+        **_herdr_engineering_vars(pins.herdr_engineering),
+        **_pi_runtime_vars(pins.pi_runtime),
     }

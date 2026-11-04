@@ -28,7 +28,8 @@ set -e
 mkdir -p {HOME}/tmp {HOME}/src {HOME}/inputs
 cp -rn /etc/skel/. {HOME}/
 tar -C /repo --exclude=.venv --exclude=.git --exclude=.coverage --exclude=.omc \
-    --exclude=.pytest_cache --exclude=.ruff_cache --exclude='*.egg-info' -cf - . \
+    --exclude=.test-cache --exclude=.pytest_cache --exclude=.ruff_cache \
+    --exclude='*.egg-info' -cf - . \
   | tar -C {HOME}/src -xf -
 uv venv --quiet --python 3.12 {HOME}/venv
 uv pip install --quiet --python {HOME}/venv/bin/python {HOME}/src

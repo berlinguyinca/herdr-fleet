@@ -10,10 +10,8 @@ from typing import ClassVar
 
 import pytest
 
-from herdr_fleet.config import load_lock
-from herdr_fleet.inventory import build_extra_vars
 from herdr_fleet.runner import EXIT_COMMAND_NOT_RUNNABLE, Mode, run_playbook
-from tests.helpers import LOCK_EXAMPLE
+from tests.helpers import example_extra_vars
 
 
 def test_missing_executable_is_rc_127(tmp_path: Path) -> None:
@@ -58,7 +56,7 @@ def test_check_pass_keeps_going_after_a_failed_host(
     broken = tmp_path / "file"
     broken.write_text("x")
     monkeypatch.setenv("HOME", str(tmp_path))
-    extra = build_extra_vars(load_lock(LOCK_EXAMPLE))
+    extra = example_extra_vars()
     result = run_playbook(_mixed_inventory(broken), extra, Mode.CHECK)
     assert _hosts_seen(result.stdout) == {"a-bad", "b-ok"}
 
@@ -69,7 +67,7 @@ def test_apply_pass_stops_before_the_next_host(
     broken = tmp_path / "file"
     broken.write_text("x")
     monkeypatch.setenv("HOME", str(tmp_path))
-    extra = build_extra_vars(load_lock(LOCK_EXAMPLE))
+    extra = example_extra_vars()
     result = run_playbook(_mixed_inventory(broken), extra, Mode.APPLY)
     assert _hosts_seen(result.stdout) == {"a-bad"}
     assert not (tmp_path / ".local").exists()
@@ -97,7 +95,7 @@ def test_check_mode_does_not_download_node(tmp_path: Path, monkeypatch: pytest.M
     thread.start()
     try:
         monkeypatch.setenv("HOME", str(tmp_path))
-        extra = build_extra_vars(load_lock(LOCK_EXAMPLE))
+        extra = example_extra_vars()
         extra["toolchain_node_dist_url"] = f"http://127.0.0.1:{server.server_port}"
         # directories must already exist, or the download step is not reached in check mode
         prefix = tmp_path / ".local" / "share" / "herdr-fleet" / "toolchain"

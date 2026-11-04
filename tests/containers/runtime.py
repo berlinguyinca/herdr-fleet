@@ -102,33 +102,46 @@ def _docker_ready() -> str | None:
     )
 
 
-def _build_image(tag: str) -> None:
+def _build_image(tag: str, *, with_sudo: bool = False) -> None:
     """Build the test image from a context holding only the Dockerfile."""
     with tempfile.TemporaryDirectory(prefix=PREFIX) as context:
         shutil.copy(HERE / "Dockerfile", Path(context) / "Dockerfile")
-        _checked(["docker", "build", "--quiet", "-t", tag, context], timeout=1200)
+        args = ["--build-arg", "WITH_SUDO=yes"] if with_sudo else []
+        _checked(["docker", "build", "--quiet", *args, "-t", tag, context], timeout=1200)
 
 
 class DockerRuntime(ContainerRuntime):
     name = "docker"
 
-    def __init__(self) -> None:
+    def __init__(self, *, extra_caps: Sequence[str] = (), with_sudo: bool = False) -> None:
+        """``extra_caps``: Linux capabilities added back after ``--cap-drop ALL``.
+
+        Only the baseline scenario passes any: apt-get as root needs SETUID/SETGID (it drops to
+        its ``_apt`` sandbox user) and CHOWN/DAC_OVERRIDE/FOWNER/FSETID (dpkg unpacks files).
+        Never ``--privileged``. ``no-new-privileges`` stays on, except for ``with_sudo``: a setuid
+        sudo cannot work under it, so that one container (image with sudo installed, only ever
+        used by the sudoers scenario) runs without it, still with every capability dropped
+        except ``extra_caps``.
+        """
         super().__init__()
         self.image = f"{PREFIX}img-{self.unique}"
         self.container = f"{PREFIX}{self.unique}"
+        self.extra_caps = tuple(extra_caps)
+        self.with_sudo = with_sudo
 
     @classmethod
     def unavailable_reason(cls) -> str | None:
         return _docker_ready()
 
     def start(self) -> None:
-        _build_image(self.image)
+        _build_image(self.image, with_sudo=self.with_sudo)
         _checked(
             [
                 "docker", "run", "--detach", "--init",
                 "--name", self.container,
-                "--security-opt", "no-new-privileges",
+                *([] if self.with_sudo else ["--security-opt", "no-new-privileges"]),
                 "--cap-drop", "ALL",
+                *[arg for cap in self.extra_caps for arg in ("--cap-add", cap)],
                 "--mount", f"type=bind,source={REPO},target={CONTAINER_REPO},readonly",
                 self.image, "sleep", "infinity",
             ]
@@ -141,6 +154,19 @@ class DockerRuntime(ContainerRuntime):
             "docker", "exec", "--interactive", "--user", "fleet", "--workdir", CONTAINER_HOME,
             "--env", f"HOME={CONTAINER_HOME}", "--env", f"PATH={BASE_PATH}",
             "--env", f"TMPDIR={CONTAINER_HOME}/tmp",
+            self.container, *argv,
+        ]  # fmt: skip
+        return subprocess.run(
+            command, input=stdin or "", capture_output=True, text=True, check=False, timeout=timeout
+        )
+
+    def exec_as_root(
+        self, argv: Sequence[str], *, stdin: str | None = None, timeout: float = 900
+    ) -> Completed:
+        """Run ``argv`` as root with HOME=/root (the only privileged entry point)."""
+        command = [
+            "docker", "exec", "--interactive", "--user", "root", "--workdir", "/root",
+            "--env", "HOME=/root", "--env", f"PATH={BASE_PATH}", "--env", "TMPDIR=/tmp",
             self.container, *argv,
         ]  # fmt: skip
         return subprocess.run(

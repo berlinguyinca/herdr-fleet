@@ -1,0 +1,112 @@
+---
+# fabric.env, the fabric agent unit and its service. The unit is the release's own template with
+# the placeholder replaced by the venv's herdr-eng, so a new release changes the unit exactly when
+# the template changed. macOS has no systemd: the agent is not managed there (fingerprint says
+# "unmanaged").
+- name: config directory
+  ansible.builtin.file:
+    path: "{{ herdr_engineering_config_dir }}"
+    state: directory
+    mode: "0700"
+
+# lineinfile replaces only the last of several matching lines and the fingerprint reads the first,
+# so a duplicated managed key is first removed everywhere (only then, to stay idempotent) and then
+# written once below: exactly one line, and check and apply agree.
+- name: fabric.env current contents
+  ansible.builtin.slurp:
+    src: "{{ herdr_engineering_env_file }}"
+  register: herdr_engineering_env_current
+  failed_when: false
+  check_mode: false
+
+- name: fabric.env duplicated keys removed
+  ansible.builtin.lineinfile:
+    path: "{{ herdr_engineering_env_file }}"
+    regexp: "^{{ item }}="
+    state: absent
+  loop:
+    - HERDR_ENGINEERING_FABRIC_URL
+    - HERDR_ENGINEERING_CONTROL_PLANE_URL
+  when: >-
+    herdr_engineering_env_current.content is defined
+    and (herdr_engineering_env_current.content | b64decode).splitlines()
+    | select('match', '^' ~ item ~ '=') | list | length > 1
+  register: herdr_engineering_env_dedupe
+
+- name: fabric.env fabric URL
+  ansible.builtin.lineinfile:
+    path: "{{ herdr_engineering_env_file }}"
+    regexp: "^HERDR_ENGINEERING_FABRIC_URL="
+    line: "HERDR_ENGINEERING_FABRIC_URL={{ herdr_engineering_gateway_url }}"
+    create: true
+    mode: "0600"
+  register: herdr_engineering_env_url
+
+# Written only when the config sets it: there is no default control plane to invent.
+- name: fabric.env control plane URL
+  ansible.builtin.lineinfile:
+    path: "{{ herdr_engineering_env_file }}"
+    regexp: "^HERDR_ENGINEERING_CONTROL_PLANE_URL="
+    line: "HERDR_ENGINEERING_CONTROL_PLANE_URL={{ herdr_engineering_control_plane_url }}"
+    create: true
+    mode: "0600"
+  register: herdr_engineering_env_control
+  when: herdr_engineering_control_plane_url | default(none) is not none
+
+# Removing services.control_plane.url from the config removes the line it once wrote.
+- name: fabric.env control plane URL removed
+  ansible.builtin.lineinfile:
+    path: "{{ herdr_engineering_env_file }}"
+    regexp: "^HERDR_ENGINEERING_CONTROL_PLANE_URL="
+    state: absent
+  when: herdr_engineering_control_plane_url | default(none) is none
+
+- name: release unit template
+  ansible.builtin.slurp:
+    src: "{{ herdr_engineering_unit_template }}"
+  register: herdr_engineering_template
+  when: ansible_facts.system == 'Linux' and herdr_engineering_release_stat.stat.exists
+  check_mode: false
+
+- name: user unit directory
+  ansible.builtin.file:
+    path: "{{ herdr_engineering_unit_dir }}"
+    state: directory
+  when: herdr_engineering_template is not skipped
+
+- name: fabric agent unit
+  ansible.builtin.copy:
+    content: >-
+      {{ herdr_engineering_template.content | b64decode
+      | replace(herdr_engineering_unit_placeholder, herdr_engineering_entry) }}
+    dest: "{{ herdr_engineering_unit }}"
+    mode: "0644"
+  register: herdr_engineering_unit_result
+  when: herdr_engineering_template is not skipped
+
+- name: user systemd manager
+  ansible.builtin.include_tasks: systemd.yml
+
+# The agent restarts when its unit, its environment or the staged release changed; otherwise it is
+# only ensured to be enabled and running.
+- name: fabric agent service
+  when: herdr_engineering_systemd_user and herdr_engineering_template is not skipped
+  environment: "{{ herdr_engineering_systemd_env }}"
+  block:
+    - name: reload user systemd units
+      ansible.builtin.systemd:
+        scope: user
+        daemon_reload: true
+      when: herdr_engineering_unit_result is changed
+
+    - name: enable and run the fabric agent
+      ansible.builtin.systemd:
+        scope: user
+        name: "{{ herdr_engineering_unit_name }}"
+        enabled: true
+        state: >-
+          {{ 'restarted' if (herdr_engineering_unit_result is changed
+          or herdr_engineering_env_url is changed
+          or herdr_engineering_env_control is changed
+          or herdr_engineering_env_dedupe is changed
+          or herdr_engineering_staged is changed) else 'started' }}

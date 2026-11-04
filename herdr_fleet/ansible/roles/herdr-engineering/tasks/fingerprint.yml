@@ -1,0 +1,155 @@
+---
+- name: probe the staged release
+  ansible.builtin.include_tasks: probe.yml
+
+- name: venv entry point
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_entry }}"
+  register: fp_herdr_engineering_entry
+  check_mode: false
+
+- name: herdr-eng shim
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_shim }}"
+  register: fp_herdr_engineering_shim
+  check_mode: false
+
+- name: herdr-eng --version
+  ansible.builtin.command:
+    argv: ["{{ herdr_engineering_entry }}", --version]
+  register: fp_herdr_engineering_version
+  when: fp_herdr_engineering_entry.stat.exists
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  environment:
+    PYTHONDONTWRITEBYTECODE: "1"
+
+# A bash login shell (bash -l, no TTY) with a clean environment: what a service or a job would
+# see. Profile scripts may print anything, so the answer is the RESOLVED= marker line only.
+- name: where a bash login shell finds herdr-eng
+  ansible.builtin.command:
+    argv:
+      - env
+      - -i
+      - "HOME={{ herdr_engineering_home }}"
+      - PATH=/usr/local/bin:/usr/bin:/bin
+      - bash
+      - -lc
+      - "printf 'RESOLVED=%s\\n' \"$(command -v herdr-eng)\""
+  register: fp_herdr_engineering_resolved
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: read the herdr-engineering probe results
+  ansible.builtin.set_fact:
+    fp_herdr_engineering_resolved_path: >-
+      {{ (fp_herdr_engineering_resolved.stdout_lines | default([]) | select('match', '^RESOLVED=')
+      | list | last | default('RESOLVED=')) | regex_replace('^RESOLVED=', '') | trim }}
+    fp_herdr_engineering_version_text: >-
+      {{ (fp_herdr_engineering_version.stdout | default('') | trim).split('\n')[0] }}
+
+- name: user systemd manager
+  ansible.builtin.include_tasks: systemd.yml
+
+- name: fabric.env
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_env_file }}"
+  register: fp_herdr_engineering_env_stat
+  check_mode: false
+
+- name: fabric.env contents
+  ansible.builtin.slurp:
+    src: "{{ herdr_engineering_env_file }}"
+  register: fp_herdr_engineering_env
+  when: fp_herdr_engineering_env_stat.stat.exists
+  check_mode: false
+
+- name: release unit template
+  ansible.builtin.slurp:
+    src: "{{ herdr_engineering_unit_template }}"
+  register: fp_herdr_engineering_template
+  failed_when: false
+  check_mode: false
+
+- name: installed fabric agent unit
+  ansible.builtin.slurp:
+    src: "{{ herdr_engineering_unit }}"
+  register: fp_herdr_engineering_unit
+  failed_when: false
+  check_mode: false
+
+- name: fabric agent service state
+  ansible.builtin.command:
+    argv: [systemctl, --user, is-active, "{{ herdr_engineering_unit_name }}"]
+  environment: "{{ herdr_engineering_systemd_env }}"
+  register: fp_herdr_engineering_active
+  when: herdr_engineering_systemd_user
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: installed build gate
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_gate }}"
+    checksum_algorithm: sha256
+  register: fp_herdr_engineering_gate
+  check_mode: false
+
+- name: release build gate
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_gate_source }}"
+    checksum_algorithm: sha256
+  register: fp_herdr_engineering_gate_release
+  check_mode: false
+
+- name: read the fabric results
+  ansible.builtin.set_fact:
+    fp_herdr_engineering_env_text: >-
+      {{ (fp_herdr_engineering_env.content | default('') | b64decode) }}
+    fp_herdr_engineering_unit_ok: >-
+      {{ fp_herdr_engineering_unit.content is defined and fp_herdr_engineering_template.content is defined
+      and (fp_herdr_engineering_unit.content | b64decode)
+      == (fp_herdr_engineering_template.content | b64decode
+      | replace(herdr_engineering_unit_placeholder, herdr_engineering_entry)) }}
+    fp_herdr_engineering_service: >-
+      {{ 'unmanaged' if not herdr_engineering_systemd_user
+      else ('active' if (fp_herdr_engineering_active.stdout | trim) == 'active' else 'inactive') }}
+
+# A managed key that appears twice is drift: systemd reads the last assignment, a first-match
+# reader sees the first, and apply converges to exactly one line.
+- name: fabric.env keys that appear more than once
+  ansible.builtin.set_fact:
+    fp_herdr_engineering_env_duplicate_keys: >-
+      {{ (['HERDR_ENGINEERING_FABRIC_URL']
+      if (fp_herdr_engineering_env_text.splitlines()
+      | select('match', '^HERDR_ENGINEERING_FABRIC_URL=') | list | length) > 1 else [])
+      + (['HERDR_ENGINEERING_CONTROL_PLANE_URL']
+      if (fp_herdr_engineering_env_text.splitlines()
+      | select('match', '^HERDR_ENGINEERING_CONTROL_PLANE_URL=') | list | length) > 1 else []) }}
+
+- name: record herdr-engineering
+  ansible.builtin.set_fact:
+    fleet_fingerprint: >-
+      {{ fleet_fingerprint | default({}) | combine({
+      'system': ansible_facts.system,
+      'machine': ansible_facts.architecture,
+      'herdr_engineering': {
+      'revision': (herdr_engineering_attested if herdr_engineering_attested | length > 0 else None),
+      'source_root': (herdr_engineering_attested_root if herdr_engineering_attested_root | length > 0 else None),
+      'herdr_eng_version': (fp_herdr_engineering_version_text if fp_herdr_engineering_version_text | length > 0 else None),
+      'venv_entry_present': fp_herdr_engineering_entry.stat.exists,
+      'shim_path': herdr_engineering_shim,
+      'shim_present': fp_herdr_engineering_shim.stat.exists,
+      'resolved_path': (fp_herdr_engineering_resolved_path if fp_herdr_engineering_resolved_path | length > 0 else None),
+      'fabric_env_url': (fp_herdr_engineering_env_text.splitlines() | select('match', '^HERDR_ENGINEERING_FABRIC_URL=') | map('regex_replace', '^[^=]*=', '') | list | first | default(none)),
+      'fabric_env_control_plane_url': (fp_herdr_engineering_env_text.splitlines() | select('match', '^HERDR_ENGINEERING_CONTROL_PLANE_URL=') | map('regex_replace', '^[^=]*=', '') | list | first | default(none)),
+      'fabric_env_duplicates': fp_herdr_engineering_env_duplicate_keys,
+      'fabric_env_mode': (fp_herdr_engineering_env_stat.stat.mode if fp_herdr_engineering_env_stat.stat.exists else None),
+      'fabric_unit_present': fp_herdr_engineering_unit.content is defined,
+      'fabric_unit_matches_release': fp_herdr_engineering_unit_ok | bool,
+      'fabric_service': fp_herdr_engineering_service,
+      'python_requirements_sha256': (herdr_engineering_installed_requirements if herdr_engineering_installed_requirements | length > 0 else None),
+      'build_gate_sha256': (fp_herdr_engineering_gate.stat.checksum if fp_herdr_engineering_gate.stat.exists else None),
+      'build_gate_release_sha256': (fp_herdr_engineering_gate_release.stat.checksum if fp_herdr_engineering_gate_release.stat.exists else None)}}) }}

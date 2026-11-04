@@ -6,24 +6,46 @@ import json
 
 import pytest
 
+from herdr_fleet.baseline import DIRS, MACOS_COMMANDS, REQUIRED_PACKAGES, BaselinePins
 from herdr_fleet.config import load_lock
+from herdr_fleet.fingerprint import Difference, Fingerprint
+from herdr_fleet.herdr import herdr_pins
+from herdr_fleet.herdr_engineering import HerdrEngineeringPins
+from herdr_fleet.inventory import IMPLEMENTED_ROLES
+from herdr_fleet.pi_runtime import PiRuntimePins
+from herdr_fleet.pins import FleetPins
 from herdr_fleet.report import (
     EXIT_DRIFT,
     EXIT_ERROR,
     EXIT_OK,
     NOT_ATTEMPTED,
+    ROLE_COMPARATORS,
     HostReport,
     RoleStatus,
     apply_exit_code,
     build_reports,
     check_exit_code,
+    expects_fingerprint,
     parse_events,
     summarize_diff,
 )
 from herdr_fleet.toolchain import ToolchainPins, toolchain_pins
 from tests.helpers import LOCK_EXAMPLE
 
-HOST_ROLES = {"host-a": ("baseline", "toolchain")}
+
+def fleet_pins_of(pins: ToolchainPins) -> FleetPins:
+    return FleetPins(
+        baseline=BaselinePins(REQUIRED_PACKAGES, MACOS_COMMANDS, DIRS),
+        toolchain=pins,
+        herdr=herdr_pins(load_lock(LOCK_EXAMPLE)),
+        herdr_engineering=HerdrEngineeringPins(
+            revision="1" * 40, repository=None, gateway_url=None, control_plane_url=None
+        ),
+        pi_runtime=PiRuntimePins(revision="2" * 40, repository=None),
+    )
+
+
+HOST_ROLES = {"host-a": ("secret-scan", "toolchain")}
 
 
 @pytest.fixture
@@ -73,7 +95,7 @@ def fingerprint(pins: ToolchainPins, *, node: str | None, pi: str | None) -> str
 
 
 def reports(lines: list[str], pins: ToolchainPins) -> list[HostReport]:
-    return build_reports(parse_events("\n".join(lines)), HOST_ROLES, pins)
+    return build_reports(parse_events("\n".join(lines)), HOST_ROLES, fleet_pins_of(pins))
 
 
 def test_parse_ignores_non_event_lines() -> None:
@@ -120,7 +142,7 @@ def test_fingerprint_difference_alone_is_drift(pins: ToolchainPins) -> None:
 
 def test_unimplemented_roles_are_reported_not_hidden(pins: ToolchainPins) -> None:
     (report,) = reports([fingerprint(pins, node="22.11.0", pi="1.2.3")], pins)
-    baseline = next(r for r in report.roles if r.role == "baseline")
+    baseline = next(r for r in report.roles if r.role == "secret-scan")
     assert baseline.status is RoleStatus.NOT_IMPLEMENTED
     assert check_exit_code([report]) == EXIT_OK
 
@@ -203,7 +225,7 @@ def test_host_with_no_events_is_not_attempted_not_missing_fingerprint(pins: Tool
     ran, skipped = build_reports(
         parse_events(task("failed", "directories exist", host="host-a")),
         {"host-a": ("toolchain",), "host-b": ("toolchain",)},
-        pins,
+        fleet_pins_of(pins),
     )
     assert ran.status == "failed"
     assert skipped.status == "not-attempted" and not skipped.attempted
@@ -212,3 +234,68 @@ def test_host_with_no_events_is_not_attempted_not_missing_fingerprint(pins: Tool
     assert skipped.to_json()["attempted"] is False
     assert check_exit_code([skipped]) == EXIT_ERROR
     assert apply_exit_code([skipped]) == EXIT_ERROR
+
+
+def test_toolchain_comparator_is_registered_for_every_implemented_role_that_needs_one() -> None:
+    assert "toolchain" in ROLE_COMPARATORS
+    assert set(ROLE_COMPARATORS) <= set(IMPLEMENTED_ROLES)
+    assert set(IMPLEMENTED_ROLES) == set(ROLE_COMPARATORS)
+
+
+def test_differences_come_from_the_registered_comparator(pins: ToolchainPins) -> None:
+    def always_differs(fp: Fingerprint, fleet: FleetPins) -> list[Difference]:
+        return [Difference("registry", "dispatch", "used")]
+
+    parsed = parse_events(fingerprint(pins, node="22.11.0", pi="1.2.3"))
+    (report,) = build_reports(
+        parsed, HOST_ROLES, fleet_pins_of(pins), comparators={"toolchain": always_differs}
+    )
+    toolchain = next(r for r in report.roles if r.role == "toolchain")
+    assert [d.field for d in toolchain.differences] == ["registry"]
+
+
+def test_missing_fingerprint_is_an_error_whenever_any_implemented_role_is_on_the_host(
+    pins: ToolchainPins,
+) -> None:
+    only_unimplemented = build_reports(
+        parse_events(task("ok", "probe")), {"host-a": ("secret-scan",)}, fleet_pins_of(pins)
+    )
+    assert only_unimplemented[0].errors == ()
+    assert expects_fingerprint(("secret-scan", "toolchain")) is True
+    assert expects_fingerprint(("secret-scan",)) is False
+
+
+def test_fingerprint_event_with_extra_sections_still_compares_toolchain(
+    pins: ToolchainPins,
+) -> None:
+    event = json.loads(fingerprint(pins, node="22.11.0", pi="1.2.3"))
+    event["fingerprint"]["herdr"] = {"version": "0.9.1"}
+    (report,) = build_reports(parse_events(json.dumps(event)), HOST_ROLES, fleet_pins_of(pins))
+    assert check_exit_code([report]) == EXIT_OK
+    assert report.to_json()["fingerprint"]["herdr"] == {"version": "0.9.1"}  # type: ignore[index]
+
+
+def test_herdr_role_is_compared_through_the_registry(pins: ToolchainPins) -> None:
+    event = json.dumps(
+        {
+            "event": "fingerprint",
+            "host": "host-a",
+            "fingerprint": {
+                "system": "Linux",
+                "machine": "x86_64",
+                "herdr": {
+                    "path": "/h/.local/bin/herdr",
+                    "present": False,
+                    "version": None,
+                    "sha256": None,
+                    "resolved_path": None,
+                    "server_version": None,
+                },
+            },
+        }
+    )
+    (report,) = build_reports(parse_events(event), {"host-a": ("herdr",)}, fleet_pins_of(pins))
+    (herdr,) = report.roles
+    assert herdr.role == "herdr" and herdr.status is RoleStatus.DRIFT
+    assert [d.field for d in herdr.differences] == ["herdr"]
+    assert "found missing" in herdr.differences[0].message

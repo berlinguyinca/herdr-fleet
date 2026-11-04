@@ -11,6 +11,7 @@ from pathlib import Path
 
 from herdr_fleet.config import ConfigError, FleetConfig, FleetLock, load_config, load_lock
 from herdr_fleet.inventory import InventoryError, build_extra_vars, build_inventory
+from herdr_fleet.pins import fleet_notes, fleet_pins
 from herdr_fleet.plan import NO_CHANGES_NOTICE, build_plan
 from herdr_fleet.render import render_hosts
 from herdr_fleet.report import (
@@ -23,7 +24,6 @@ from herdr_fleet.report import (
     parse_events,
 )
 from herdr_fleet.runner import Mode, RunResult, run_playbook
-from herdr_fleet.toolchain import toolchain_pins
 
 APPLY_LIMITS = (
     "NOT implemented yet (slice 4): staggering by host activity, session-awareness, rollback "
@@ -85,7 +85,18 @@ def _load_inputs(
         loaded = load_config(config)
     except ConfigError as exc:
         errors.extend(exc.errors)
+    if loaded_lock is not None and loaded is not None:
+        errors.extend(_cross_check_errors(loaded_lock, loaded))
     return loaded_lock, loaded, errors
+
+
+def _cross_check_errors(lock: FleetLock, config: FleetConfig) -> list[str]:
+    """What the lock must say for the roles the config uses (e.g. repo_urls for a cloning role)."""
+    try:
+        fleet_pins(lock, config)
+    except ConfigError as exc:
+        return exc.errors
+    return []
 
 
 def _emit(payload: dict[str, object], text: str, as_json: bool) -> None:
@@ -105,20 +116,27 @@ def _run_validate(errors: list[str], as_json: bool) -> int:
     return 0
 
 
-def _run_plan(config: FleetConfig | None, errors: list[str], as_json: bool) -> int:
-    if errors or config is None:
+def _notes_text(notes: list[str]) -> list[str]:
+    return [f"note: {n}" for n in notes]
+
+
+def _run_plan(
+    lock: FleetLock | None, config: FleetConfig | None, errors: list[str], as_json: bool
+) -> int:
+    if errors or config is None or lock is None:
         return _failure(errors, as_json)
     steps = build_plan(config)
+    notes = fleet_notes(fleet_pins(lock, config))
     payload: dict[str, object] = {
         "valid": True,
         "changes_made": False,
         "notice": NO_CHANGES_NOTICE,
+        "notes": notes,
         "applications": [asdict(s) for s in steps],
     }
     lines = [f"{s.step:>3}. {s.host}: {s.role}" for s in steps]
-    _emit(
-        payload, "\n".join(["Planned role applications:", *lines, "", NO_CHANGES_NOTICE]), as_json
-    )
+    text = ["Planned role applications:", *lines, "", *_notes_text(notes), NO_CHANGES_NOTICE]
+    _emit(payload, "\n".join(text), as_json)
     return 0
 
 
@@ -135,40 +153,58 @@ def _runner_errors(result: RunResult, reports: list[HostReport]) -> list[str]:
 
 
 def _emit_reports(
-    mode: str, reports: list[HostReport], errors: list[str], code: int, as_json: bool, note: str
+    mode: str,
+    reports: list[HostReport],
+    errors: list[str],
+    code: int,
+    as_json: bool,
+    note: str,
+    notes: list[str],
 ) -> None:
     payload: dict[str, object] = {
         "mode": mode,
         "exit_code": code,
         "errors": errors,
+        "notes": notes,
         "changes_made": sum(r.changed_count for r in reports),
         "hosts": [r.to_json() for r in reports],
     }
-    text = "\n".join([render_hosts(reports), *(f"error: {e}" for e in errors), "", note]).strip()
+    text = "\n".join(
+        [render_hosts(reports), *(f"error: {e}" for e in errors), *_notes_text(notes), "", note]
+    ).strip()
     _emit(payload, text, as_json)
+
+
+def _messages(exc: InventoryError | ConfigError) -> list[str]:
+    return exc.errors if isinstance(exc, ConfigError) else [str(exc)]
 
 
 def _prepare(
     args: argparse.Namespace, lock: FleetLock, config: FleetConfig
 ) -> tuple[dict[str, object], dict[str, object]]:
     inventory = build_inventory(config.hosts, local=args.connection == "local", limit=args.limit)
-    return inventory, build_extra_vars(lock)
+    return inventory, build_extra_vars(lock, config)
 
 
 def _run_check(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -> int:
     try:
         inventory, extra_vars = _prepare(args, lock, config)
-    except InventoryError as exc:
-        return _failure([str(exc)], args.json)
+        pins = fleet_pins(lock, config)
+    except (InventoryError, ConfigError) as exc:
+        return _failure(_messages(exc), args.json)
     result = run_playbook(inventory, extra_vars, Mode.CHECK)
-    reports = build_reports(
-        parse_events(result.stdout), _host_roles(config, args.limit), toolchain_pins(lock)
-    )
+    reports = build_reports(parse_events(result.stdout), _host_roles(config, args.limit), pins)
     errors = _runner_errors(result, reports)
     code = EXIT_ERROR if errors else check_exit_code(reports)
     verdict = {0: "no drift", 2: "drift found", 1: "errors"}[code]
     _emit_reports(
-        "check", reports, errors, code, args.json, f"plan --check: {verdict} (exit {code})"
+        "check",
+        reports,
+        errors,
+        code,
+        args.json,
+        f"plan --check: {verdict} (exit {code})",
+        fleet_notes(pins),
     )
     return code
 
@@ -201,7 +237,7 @@ def _apply_one(
     inventory, extra_vars = _prepare(
         argparse.Namespace(**{**vars(args), "limit": host}), lock, config
     )
-    pins, only = toolchain_pins(lock), {host: roles[host]}
+    pins, only = fleet_pins(lock, config), {host: roles[host]}
     applied = run_playbook(inventory, extra_vars, Mode.APPLY)
     (done,) = build_reports(parse_events(applied.stdout), only, pins, expect_fingerprint=False)
     errors = _runner_errors(applied, [done])
@@ -222,8 +258,9 @@ def _run_apply(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -
     roles = _host_roles(config, args.limit)
     try:
         _prepare(args, lock, config)  # reject a bad --limit or jump host before touching anything
-    except InventoryError as exc:
-        return _failure([str(exc)], args.json)
+        pins = fleet_pins(lock, config)
+    except (InventoryError, ConfigError) as exc:
+        return _failure(_messages(exc), args.json)
     if not _confirmed(args, roles):
         return _failure(
             ["apply changes software on hosts; pass --yes (or answer the prompt on a TTY)"],
@@ -238,12 +275,14 @@ def _run_apply(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -
         if host_errors or report.status != "ok":
             break  # fail fast: later hosts are not touched
     untouched = {h: r for h, r in roles.items() if h not in {x.host for x in reports}}
-    reports.extend(build_reports(parse_events(""), untouched, toolchain_pins(lock)))
+    reports.extend(build_reports(parse_events(""), untouched, pins))
     code = EXIT_ERROR if errors else apply_exit_code(reports)
     total = sum(r.changed_count for r in reports)
     verdict = "passed" if code == EXIT_OK else "FAILED"
     note = f"apply: {total} change(s) made; per-host verification {verdict}"
-    _emit_reports("apply", reports, errors, code, args.json, f"{note}\n{APPLY_LIMITS}")
+    _emit_reports(
+        "apply", reports, errors, code, args.json, f"{note}\n{APPLY_LIMITS}", fleet_notes(pins)
+    )
     return code
 
 
@@ -255,7 +294,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "plan" and not args.check:
         if args.connection != "ssh" or args.limit:
             return _failure(["--connection and --limit only apply with --check"], args.json)
-        return _run_plan(config, errors, args.json)
+        return _run_plan(lock, config, errors, args.json)
     if errors or config is None or lock is None:
         return _failure(errors, args.json)
     return (

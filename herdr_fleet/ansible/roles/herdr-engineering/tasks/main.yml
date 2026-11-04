@@ -1,0 +1,159 @@
+---
+- name: require the pins from fleet.lock
+  ansible.builtin.assert:
+    that:
+      - herdr_engineering_revision is defined
+      - herdr_engineering_repository is defined
+      - herdr_engineering_gateway_url is defined
+      - fleet_stage_release_src is defined
+    fail_msg: herdr_engineering_* variables come from fleet.lock via herdr-fleet; do not run this role by hand
+    quiet: true
+
+- name: require the fabric URL from the config
+  ansible.builtin.assert:
+    that: herdr_engineering_gateway_url is not none and herdr_engineering_gateway_url | length > 0
+    fail_msg: herdr-engineering writes the fabric URL to fabric.env; set services.gateway.url in fleet-config.yaml
+    quiet: true
+
+- name: probe the interpreter that builds the venv
+  ansible.builtin.command:
+    argv:
+      - "{{ herdr_engineering_python }}"
+      - -c
+      - "import sys; print('%d.%d' % sys.version_info[:2])"
+  register: herdr_engineering_python_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: require a recent enough Python
+  ansible.builtin.assert:
+    that:
+      - herdr_engineering_python_probe.rc == 0
+      - herdr_engineering_python_probe.stdout | trim is version(herdr_engineering_min_python, '>=')
+    fail_msg: >-
+      herdr-engineering needs Python {{ herdr_engineering_min_python }} or newer, found
+      {{ herdr_engineering_python_probe.stdout | default('none') | trim }} from
+      {{ herdr_engineering_python }}; install python {{ herdr_engineering_min_python }} or newer,
+      or set `herdr_engineering_python`
+    quiet: true
+
+- name: probe git
+  ansible.builtin.command:
+    argv: [git, --version]
+  register: herdr_engineering_git
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: require git
+  ansible.builtin.assert:
+    that: herdr_engineering_git.rc == 0
+    fail_msg: herdr-engineering stages its release with git; install git (the baseline role does)
+    quiet: true
+
+- name: require a full commit id
+  ansible.builtin.assert:
+    that: herdr_engineering_revision is match('^([0-9a-f]{40}|[0-9a-f]{64})$')
+    fail_msg: repos.herdr-engineering in fleet.lock must be a full lowercase commit id
+    quiet: true
+
+- name: staging helper directory
+  ansible.builtin.file:
+    path: "{{ herdr_engineering_helper_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: install the staging helper
+  ansible.builtin.copy:
+    src: "{{ fleet_stage_release_src }}"
+    dest: "{{ herdr_engineering_helper }}"
+    mode: "0700"
+
+- name: require both halves of the requirements pin
+  ansible.builtin.assert:
+    that:
+      - (herdr_engineering_requirements_sha256 is none) == (herdr_engineering_requirements_src is none)
+      - herdr_engineering_requirements_sha256 is none or herdr_engineering_requirements_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      herdr_engineering_requirements_src and herdr_engineering_requirements_sha256 come together
+      from fleet.lock python_requirements.herdr-engineering
+    quiet: true
+
+# 0600: the hashed file is read by the stager only. The stager re-checks its sha256 before pip.
+- name: shipped hashed requirements
+  ansible.builtin.copy:
+    src: "{{ herdr_engineering_requirements_src }}"
+    dest: "{{ herdr_engineering_requirements_file }}"
+    mode: "0600"
+  when: herdr_engineering_requirements_sha256 is not none
+
+- name: probe the staged release
+  ansible.builtin.include_tasks: probe.yml
+
+# Pending when the release is not the pinned one, or when a pinned requirements file is not what
+# the venv was installed from. Without the lock field the requirements are not part of the answer.
+- name: work out whether the pinned release is staged
+  ansible.builtin.set_fact:
+    herdr_engineering_pending: >-
+      {{ herdr_engineering_attested != herdr_engineering_revision
+      or (herdr_engineering_requirements_sha256 is not none
+      and herdr_engineering_installed_requirements != herdr_engineering_requirements_sha256) }}
+
+# The helper refuses a dirty or wrong-commit checkout and never edits an existing release, so a
+# new pin adds a release and keeps the old one. Check mode never runs git or pip; the marker
+# below reports the pending stage instead.
+- name: stage herdr-engineering {{ herdr_engineering_revision[:12] }}
+  ansible.builtin.command:
+    argv: >-
+      {{ [herdr_engineering_python, herdr_engineering_helper, '--kind', 'herdr',
+      '--revision', herdr_engineering_revision, '--repository', herdr_engineering_repository,
+      '--python', herdr_engineering_python, '--home', herdr_engineering_home]
+      + ([] if herdr_engineering_requirements_sha256 is none else
+      ['--requirements', herdr_engineering_requirements_file,
+      '--requirements-sha256', herdr_engineering_requirements_sha256]) }}
+  register: herdr_engineering_staged
+  changed_when: true
+  when: not ansible_check_mode and herdr_engineering_pending
+
+- name: stage herdr-engineering {{ herdr_engineering_revision[:12] }} (pending)
+  ansible.builtin.command:
+    argv: [/bin/true]
+  changed_when: true
+  check_mode: false
+  when: ansible_check_mode and herdr_engineering_pending
+
+- name: venv entry point
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_entry }}"
+  register: herdr_engineering_entry_stat
+  check_mode: false
+
+# ~/.local/bin is the user's own directory: create it if missing, never change its mode.
+- name: binary directory exists
+  ansible.builtin.file:
+    path: "{{ herdr_engineering_bin_dir }}"
+    state: directory
+
+- name: herdr-eng shim
+  ansible.builtin.file:
+    src: "{{ herdr_engineering_entry }}"
+    dest: "{{ herdr_engineering_shim }}"
+    state: link
+  when: herdr_engineering_entry_stat.stat.exists
+
+# Everything below needs the release on disk, so on a fresh host check mode reports the pending
+# stage above and nothing else.
+- name: staged release directory
+  ansible.builtin.stat:
+    path: "{{ herdr_engineering_unit_template | dirname | dirname }}"
+  register: herdr_engineering_release_stat
+  check_mode: false
+
+- name: fabric.env, agent unit and service
+  ansible.builtin.include_tasks: fabric.yml
+  when: herdr_engineering_release_stat.stat.exists
+
+- name: Pi build gate
+  ansible.builtin.include_tasks: build_gate.yml
+  when: herdr_engineering_release_stat.stat.exists
