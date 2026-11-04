@@ -298,7 +298,13 @@ def detect_indent(raw):
 
 
 def acquire_settings_lock(lock):
-    """mkdir the lock, removing a stale one and waiting briefly for a live one."""
+    """mkdir the lock, removing a stale one and waiting briefly for a live one.
+
+    Known window: between the staleness check and ``rmdir`` another process may have replaced the
+    stale lock with a live one, and that one would be removed. Pi's own lock protocol
+    (proper-lockfile) has the same window, and fleet stagers are serialized by stage.lock, so it
+    needs a non-fleet writer to hit a lock older than LOCK_STALE_SECONDS in that instant.
+    """
     deadline = time.monotonic() + LOCK_WAIT_SECONDS
     while True:
         try:

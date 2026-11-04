@@ -22,6 +22,8 @@
   failed_when: false
   changed_when: false
   check_mode: false
+  environment:
+    PYTHONDONTWRITEBYTECODE: "1"
 
 - name: read the attestation
   ansible.builtin.set_fact:

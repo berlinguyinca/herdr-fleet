@@ -62,13 +62,19 @@ read-only probes on the host: file reads and hashes, `--version` of installed bi
 `systemctl --user show`, and for the staged releases the local `git rev-parse HEAD` and
 `git status --porcelain --untracked-files=all` (run with `GIT_OPTIONAL_LOCKS=0` so they take no
 `index.lock`; a test shows the index file is byte-identical afterwards) plus
-`stage_release.py --describe`, which is offline. A pending change is reported from those reads
-alone.
+`stage_release.py --describe`, which is offline. The probes that run Python on the host set
+`PYTHONDONTWRITEBYTECODE=1`, so they leave no `.pyc` files in a venv. A pending change is reported
+from those reads alone.
 
 Each host also reports a fingerprint (os/arch, managed Node version, CLI versions, shim path,
 what `command -v pi` resolves to in a clean-environment bash login shell (`bash -lc`, no TTY;
 only a marker line of its output is read, so profile banners cannot cause drift), and whether
 that is the shim).
+
+If `herdr` or `herdr-eng` is installed but a login shell cannot find it on `PATH` at all (for
+example `~/.local/bin` is not on it), that is a PATH setup `apply` cannot fix: the report shows an
+informational `notes:` line for the role and the host is not drifted. A different binary winning
+the lookup, or a missing install, is still drift.
 
 ### Toolchain role
 
@@ -90,7 +96,8 @@ managed bin first on `PATH` and then exec the real CLI. Changing the shell's def
 - **`herdr-engineering`** (no root): stages the pinned commit with the vendored release stager
   into a write-once release directory, builds the `herdr-eng` venv, links `~/.local/bin/herdr-eng`,
   writes `~/.config/herdr-engineering/fabric.env` (0600, from `services.gateway.url`, plus
-  `services.control_plane.url` only when set), renders the fabric agent unit and installs the Pi
+  `services.control_plane.url` only when set; a duplicated managed key is drift and apply leaves
+  exactly one line), renders the fabric agent unit and installs the Pi
   build gate. The service is only managed when a systemd user manager exists. Needs Python 3.12 or
   newer (`python3` on the target's `PATH`).
 - **`pi-runtime`** (no root): **staging only**. Puts the pinned pi-engineering commit on disk,
@@ -102,7 +109,8 @@ managed bin first on `PATH` and then exec the real CLI. Changing the shell's def
   (`~/.local/share/herdr-engineering/pi/releases`) is repointed to the staged release; a local
   checkout registered from anywhere else (for example a developer's working copy) is never
   rewritten, so the staged release is registered next to it and the operator removes whichever
-  entry they do not want. The existing mode of `settings.json` is kept. A failing git, npm or pip
+  entry they do not want. The existing mode of `settings.json` is kept. A `settings.json` that is not a JSON object with a `packages` list is reported as drift
+  (`pi-runtime settings`), never overwritten. A failing git, npm or pip
   command prints its own error output (last 40 lines) and the stager exits 1. Rollout revisions must equal `repos.pi-engineering`.
 - **`baseline`**: required packages (`git curl ca-certificates python3 python3-venv xz-utils`) plus
   `baseline.extra_packages` from the config (Debian and Ubuntu only: on macOS the role installs
@@ -122,8 +130,10 @@ change, so a role that clones a repository fails naming the missing key.
 Python dependencies of `herdr-engineering` can be pinned with the lock's optional
 `python_requirements.herdr-engineering` (`file`: a hashed requirements file shipped next to the
 lock; `sha256`: its checksum). The stager and the role then run `pip install --require-hashes -r`
-and `pip install --no-deps`, the fingerprint reports the checksum and `plan --check` names a
-mismatch. Without the field nothing changes and `plan` prints the note "unpinned python
+and `pip install --no-deps` (then `pip check`; a broken dependency set fails), the fingerprint reports the checksum and `plan --check` names a
+mismatch. The file must contain at least one requirement and every requirement line must carry
+`--hash=sha256:` (`-r`, `-c` and `-e` are refused). A changed requirements file rebuilds the venv
+so dropped packages disappear. Without the field nothing changes and `plan` prints the note "unpinned python
 dependencies". First understood by herdr-fleet 0.1.0. See
 `docs/follow-ups/python-dependencies-are-not-pinned.md` for what remains.
 

@@ -60,11 +60,19 @@ container, never against a host socket.
 
 `test_baseline_scenario.py` runs real `apt` as container root with only the capabilities apt needs
 (`DockerRuntime(extra_caps=...)`, never `--privileged`); it is Docker-only and skips on Apptainer.
+The restricted-sudoers scenario builds the image with `--build-arg WITH_SUDO=yes` (sudo installed,
+nothing granted) and runs it with `DockerRuntime(with_sudo=True)`, which drops `no-new-privileges`
+for that one container only (sudo is a setuid binary); capabilities are still `--cap-drop ALL` plus
+the extras. The test writes a real `/etc/sudoers.d` file allowing exactly the three commands and
+checks that an unlisted `sudo -n true` is refused.
 
 Known fixture dependencies: both public repositories and the herdr GitHub release must stay
 reachable, and the scenarios need PyPI and the npm registry (`pip install`/`npm ci` of the staged
 releases). To re-pin herdr: `curl -sL https://api.github.com/repos/herdrdev/herdr/releases/tags/v<ver>`
 and read each asset's `digest`.
+
+No real operator hostnames appear in this repository; the only exempt names are the public fixture
+repositories under the project owner's GitHub account used by `tests/containers/fixtures/fleet.lock.yaml`.
 
 ### Not covered by automated tests (manual canary)
 
@@ -111,7 +119,9 @@ What is still not a real counterpart, stated precisely:
   (`tests/test_herdr.py`) and not by a live server. The container scenarios assert that no herdr
   process was started either.
 - The local npm registry is a small HTTP server in the test code, serving real package tarballs: it
-  is the registry that is ours, npm is the real client.
+  is the registry that is ours, npm is the real client. This is the one documented hand-written
+  stand-in: replacing it with verdaccio would need a node-based server installed from the network
+  on every cold run, which breaks the offline-after-cache property; revisit if that changes.
 - Files such as `#!/bin/sh` decoys written by a few tests (a pre-existing foreign `herdr`, a decoy
   `pi` on `PATH` in the container scenario) are fixtures describing what is already on the host,
   and are expected to be replaced or ignored by the role, not stand-ins for a dependency.

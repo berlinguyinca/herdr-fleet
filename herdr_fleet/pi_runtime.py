@@ -44,6 +44,7 @@ class PiRuntimeFingerprint:
     settings_path: str
     registered: bool  # settings.json lists release_path
     node_modules_present: bool
+    settings_valid: bool = True  # settings.json is absent or a JSON object with a packages list
 
     @classmethod
     def from_json(cls, raw: sections.Section) -> PiRuntimeFingerprint:
@@ -54,6 +55,9 @@ class PiRuntimeFingerprint:
             settings_path=sections.text(SECTION, raw, "settings_path"),
             registered=sections.flag(SECTION, raw, "registered"),
             node_modules_present=sections.flag(SECTION, raw, "node_modules_present"),
+            settings_valid=(
+                sections.flag(SECTION, raw, "settings_valid") if "settings_valid" in raw else True
+            ),
         )
 
 
@@ -68,7 +72,15 @@ def compare_pi_runtime(fp: Fingerprint, pins: PiRuntimePins) -> list[Difference]
         differences.append(
             Difference(f"{ROLE} revision", pins.revision, found.revision or "missing")
         )
-    if not found.registered:
+    if not found.settings_valid:
+        differences.append(
+            Difference(
+                f"{ROLE} settings",
+                f"{found.settings_path} as a JSON object with a packages list",
+                "malformed (fix or remove it; apply will not overwrite it)",
+            )
+        )
+    elif not found.registered:
         differences.append(
             Difference(
                 f"{ROLE} registration",

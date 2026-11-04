@@ -312,3 +312,24 @@ def test_a_short_revision_is_refused(home: Path, source: Source) -> None:
     )
     assert result.returncode != 0
     assert "repos.pi-engineering" in result.stdout
+
+
+@pytest.mark.parametrize("content", ["{not json", "[1, 2]", '{"packages": "oops"}'])
+def test_malformed_settings_are_drift_not_an_aborted_report(
+    home: Path, source: Source, content: str
+) -> None:
+    converge(home, source, Mode.APPLY)
+    settings(home).write_text(content)
+    found = messages(home, source)  # verify still returns a fingerprint instead of failing
+    assert any(m.startswith("pi-runtime settings: expected") and "malformed" in m for m in found)
+    assert settings(home).read_text() == content  # the probe never rewrites it
+
+
+def test_apply_refuses_to_overwrite_malformed_settings_and_names_the_problem(
+    home: Path, source: Source
+) -> None:
+    converge(home, source, Mode.APPLY)
+    settings(home).write_text("{not json")
+    result = run_playbook(LOCAL, variables(source), Mode.APPLY)
+    assert result.returncode != 0
+    assert settings(home).read_text() == "{not json"
