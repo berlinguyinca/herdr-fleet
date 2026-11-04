@@ -89,6 +89,35 @@ def test_a_file_without_any_hash_is_refused(tmp_path: Path) -> None:
         python_requirements(load_lock(path), "herdr-engineering")
 
 
+@pytest.mark.parametrize(
+    "text, fragment",
+    [
+        ("# only a comment --hash=sha256:" + "a" * 64 + "\n", "no requirement"),
+        ("\n   \n", "no requirement"),
+        (HASHED + "unhashed==2.0\n", "unhashed==2.0"),
+        (HASHED + "second==1 \\\n    # no hash here\n", "second==1"),
+        (HASHED + "-r other.txt\n", "-r other.txt"),
+        (HASHED + "-e .\n", "-e ."),
+    ],
+)
+def test_every_requirement_needs_a_hash_and_at_least_one_must_exist(
+    tmp_path: Path, text: str, fragment: str
+) -> None:
+    path = lock_with(tmp_path, text)
+    with pytest.raises(ConfigError, match=fragment.replace("+", r"\+")):
+        python_requirements(load_lock(path), "herdr-engineering")
+
+
+def test_comments_blank_lines_options_and_continuations_are_accepted(tmp_path: Path) -> None:
+    text = (
+        "# generated\n\n--index-url https://pypi.example.invalid/simple\n"
+        "a==1 \\\n    --hash=sha256:" + "a" * 64 + " \\\n    --hash=sha256:" + "b" * 64 + "\n"
+        "b==2 --hash=sha256:" + "c" * 64 + "  # trailing comment\n"
+    )
+    found = python_requirements(load_lock(lock_with(tmp_path, text)), "herdr-engineering")
+    assert found is not None
+
+
 def test_a_symlink_out_of_the_lock_directory_is_refused(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()

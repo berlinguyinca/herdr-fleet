@@ -9,6 +9,7 @@ host by ``pip install --require-hashes``.
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -62,12 +63,47 @@ def python_requirements(lock: FleetLock, name: str) -> PythonRequirements | None
                 "update the lock's sha256 after reviewing the file"
             ]
         )
-    if HASH_MARKER.encode() not in raw:
+    problem = _requirements_problem(raw.decode("utf-8", errors="replace"))
+    if problem is not None:
         raise ConfigError(
             [
-                f"{where}.file: {path.name} contains no {HASH_MARKER} entries; "
-                "it must be generated "
-                "with --generate-hashes so pip --require-hashes can verify every package"
+                f"{where}.file: {path.name}: {problem}; it must be generated with "
+                "--generate-hashes so pip --require-hashes can verify every package"
             ]
         )
     return PythonRequirements(path=path, sha256=digest)
+
+
+# Options that make pip read other files or install something unhashed from a path.
+_FORBIDDEN_OPTIONS = ("-r", "--requirement", "-c", "--constraint", "-e", "--editable")
+
+
+def _logical_lines(text: str) -> list[str]:
+    """Requirement lines with continuations joined and comments and blank lines dropped."""
+    lines: list[str] = []
+    pending = ""
+    for physical in text.splitlines():
+        stripped = re.sub(r"(^|\s)#.*$", "", physical).rstrip()
+        joined = pending + stripped
+        if joined.endswith("\\"):
+            pending = joined[:-1] + " "
+            continue
+        pending = ""
+        if joined.strip():
+            lines.append(joined.strip())
+    if pending.strip():
+        lines.append(pending.strip())
+    return lines
+
+
+def _requirements_problem(text: str) -> str | None:
+    requirements = 0
+    for line in _logical_lines(text):
+        if line.startswith("-"):
+            if line.split()[0] in _FORBIDDEN_OPTIONS or line.startswith(("-r", "-c", "-e")):
+                return f"{line.split()[0]} is not allowed ({line})"
+            continue  # an index or find-links option
+        requirements += 1
+        if HASH_MARKER not in line:
+            return f"requirement without {HASH_MARKER}: {line}"
+    return None if requirements else "no requirement lines (only comments, blanks or options)"
