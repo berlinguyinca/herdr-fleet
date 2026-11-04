@@ -97,7 +97,13 @@ managed bin first on `PATH` and then exec the real CLI. Changing the shell's def
   installs its dependencies with the managed toolchain's `npm`, and registers the release in
   `~/.pi/agent/settings.json` (other settings are preserved). It never reloads, restarts or
   signals Pi, never touches missions and never deletes an older release; activation belongs to
-  the rollout coordinator. Rollout revisions must equal `repos.pi-engineering`.
+  the rollout coordinator. Only an entry for the same clone URL, an `npm:pi-engineering-runtime`
+  entry, or a local path under the managed release root
+  (`~/.local/share/herdr-engineering/pi/releases`) is repointed to the staged release; a local
+  checkout registered from anywhere else (for example a developer's working copy) is never
+  rewritten, so the staged release is registered next to it and the operator removes whichever
+  entry they do not want. The existing mode of `settings.json` is kept. A failing git, npm or pip
+  command prints its own error output (last 40 lines) and the stager exits 1. Rollout revisions must equal `repos.pi-engineering`.
 - **`baseline`**: required packages (`git curl ca-certificates python3 python3-venv xz-utils`) plus
   `baseline.extra_packages` from the config (Debian and Ubuntu only: on macOS the role installs
   nothing, so `extra_packages` are ignored there), the state/config directories, linger and an

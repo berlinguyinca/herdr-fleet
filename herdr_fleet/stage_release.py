@@ -20,6 +20,7 @@ import os
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -41,16 +42,36 @@ REQUIREMENTS_MARKER = "herdr-fleet-requirements.sha256"
 GIT_ENV_READ_ONLY = {"GIT_OPTIONAL_LOCKS": "0"}
 
 
+# How many trailing lines of a failed command's output are shown.
+FAILURE_TAIL_LINES = 40
+
+
+class CommandFailed(subprocess.CalledProcessError):
+    """A command exited non-zero; ``str()`` names it and shows the tail of its output."""
+
+    def __str__(self):
+        tail = "\n".join(
+            "\n".join(part.strip().splitlines()[-FAILURE_TAIL_LINES:])
+            for part in (self.stdout, self.stderr)
+            if part and part.strip()
+        )
+        shown = " ".join(str(part) for part in self.cmd)
+        suffix = "\n" + tail if tail else ""
+        return f"command failed (exit {self.returncode}): {shown}{suffix}"
+
+
 def run(cmd, *, cwd=None, env=None):
     if cmd and cmd[0] == "git" and env is None:
         env = dict(os.environ, **GIT_ENV_READ_ONLY)
     result = subprocess.run(
-        cmd, cwd=cwd, env=env, check=True, capture_output=True, text=True, timeout=900
+        cmd, cwd=cwd, env=env, check=False, capture_output=True, text=True, timeout=900
     )
+    if result.returncode != 0:
+        raise CommandFailed(result.returncode, cmd, output=result.stdout, stderr=result.stderr)
     return result.stdout.strip()
 
 
-def atomic_json(path, data, indent=2, trailing_newline=True):
+def atomic_json(path, data, indent=2, trailing_newline=True, mode=None):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=".release-")
     try:
@@ -60,6 +81,8 @@ def atomic_json(path, data, indent=2, trailing_newline=True):
                 stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
+        if mode is not None:
+            os.chmod(temporary, mode)
         os.replace(temporary, str(path))
     finally:
         if os.path.exists(temporary):
@@ -111,7 +134,16 @@ def repository_pattern(repository):
     )
 
 
+def managed_pi_root(home):
+    return Path(os.path.realpath(str(home / ".local/share/herdr-engineering/pi/releases")))
+
+
 def is_pi_package(entry, home, repository):
+    """True for a registration this tool may repoint to the staged release.
+
+    A local-directory entry counts only when it lives under the managed release root: a
+    developer's own checkout registered in settings.json is not ours and is never rewritten.
+    """
     if isinstance(entry, str):
         source = entry
     elif isinstance(entry, dict):
@@ -133,6 +165,9 @@ def is_pi_package(entry, home, repository):
             directory = Path(source)
         else:
             directory = home / ".pi/agent" / source
+        real = Path(os.path.realpath(str(directory)))
+        if real != managed_pi_root(home) and managed_pi_root(home) not in real.parents:
+            return False
         try:
             name = json.loads((directory / "package.json").read_text()).get("name")
         except (OSError, ValueError):
@@ -221,21 +256,34 @@ def _install_herdr(home, release, python, runner, requirements=None):
     """``requirements`` is ``(path, sha256)`` of a hashed requirements file, or None (unpinned)."""
     venv = home / ".venvs/herdr-engineering"
     marker = venv / REQUIREMENTS_MARKER
-    if not (venv / "bin/python").exists():
-        runner([python, "-m", "venv", str(venv)])
-    pip = [str(venv / "bin/python"), "-m", "pip", "install", "--quiet"]
     if requirements is None:
         marker.unlink(missing_ok=True)
-        runner(pip + ["--upgrade", str(release)])
+        if not (venv / "bin/python").exists():
+            runner([python, "-m", "venv", str(venv)])
+        runner(
+            [str(venv / "bin/python"), "-m", "pip", "install", "--quiet", "--upgrade", str(release)]
+        )
         verify_herdr_distribution(home, release, runner)
         return
     path, expected = requirements
     if file_sha256(path) != expected:
         raise RuntimeError("Requirements file does not match its pinned sha256; not installing")
+    already = marker.read_text().strip() if marker.exists() else None
+    # The marker only ever means "the last pinned install finished": remove it before touching the
+    # venv so a failure part-way cannot leave a stale one. A venv last built from other
+    # requirements (or none) is rebuilt, because pip never uninstalls what a file no longer lists.
+    marker.unlink(missing_ok=True)
+    if already != expected and venv.exists():
+        shutil.rmtree(str(venv))
+    if not (venv / "bin/python").exists():
+        runner([python, "-m", "venv", str(venv)])
+    pip = [str(venv / "bin/python"), "-m", "pip"]
+    install = pip + ["install", "--quiet"]
     # Every dependency is verified against the file's hashes; the release itself is then installed
-    # without letting pip resolve anything else.
-    runner(pip + ["--require-hashes", "-r", str(path)])
-    runner(pip + ["--no-deps", "--upgrade", str(release)])
+    # without letting pip resolve anything else, and pip check proves nothing it needs is missing.
+    runner(install + ["--require-hashes", "-r", str(path)])
+    runner(install + ["--no-deps", "--upgrade", str(release)])
+    runner(pip + ["check"])
     verify_herdr_distribution(home, release, runner)
     marker.write_text(expected + "\n")
 
@@ -287,6 +335,7 @@ def _write_settings(pending):
             value,
             indent=detect_indent(before),
             trailing_newline=before is None or before.endswith(b"\n"),
+            mode=stat.S_IMODE(settings.stat().st_mode) if settings.exists() else None,
         )
     finally:
         settings_lock.rmdir()
@@ -385,15 +434,21 @@ def main(argv=None):
         parser.error("--requirements and --requirements-sha256 go together")
     if args.requirements and args.kind != "herdr":
         parser.error("--requirements applies to --kind herdr only")
-    result = stage(
-        args.home,
-        args.revision,
-        args.kind,
-        args.repository,
-        python=args.python,
-        path_prefix=args.path_prefix,
-        requirements=(args.requirements, args.requirements_sha256) if args.requirements else None,
-    )
+    try:
+        result = stage(
+            args.home,
+            args.revision,
+            args.kind,
+            args.repository,
+            python=args.python,
+            path_prefix=args.path_prefix,
+            requirements=(args.requirements, args.requirements_sha256)
+            if args.requirements
+            else None,
+        )
+    except (subprocess.SubprocessError, RuntimeError, ValueError, OSError) as exc:
+        print(f"stage-release: {exc}", file=sys.stderr)
+        return 1
     print(json.dumps(result))
     return 0
 

@@ -136,7 +136,11 @@ APT_INSTALL_JQ = "/usr/bin/apt-get install -y --no-install-recommends -- jq"
 def grant(box: DockerRuntime, *commands: str) -> None:
     rule = f"fleet ALL=(root) NOPASSWD: {', '.join(commands)}\n" if commands else ""
     done = box.exec_as_root(
-        ["bash", "-c", f"printf %s '{rule}' > {SUDOERS} && chmod 0440 {SUDOERS} && /usr/sbin/visudo -c -q"]
+        [
+            "bash",
+            "-c",
+            f"printf %s '{rule}' > {SUDOERS} && chmod 0440 {SUDOERS} && /usr/sbin/visudo -c -q",
+        ]
     )
     assert done.returncode == 0, done.stdout + done.stderr
 

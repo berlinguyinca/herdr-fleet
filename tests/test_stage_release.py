@@ -445,13 +445,18 @@ def test_repository_pattern_does_not_match_another_repository() -> None:
 def test_a_local_directory_package_named_pi_engineering_runtime_is_recognized(
     tmp_path: Path,
 ) -> None:
-    directory = tmp_path / "pkg"
-    directory.mkdir()
+    directory = root_of(tmp_path, "pi") / "releases" / ("c" * 40)
+    directory.mkdir(parents=True)
     (directory / "package.json").write_text(json.dumps(PI_PACKAGE))
     assert stage_release.is_pi_package(str(directory), tmp_path, "https://example.com/a/b.git")
     assert not stage_release.is_pi_package(
-        str(tmp_path / "missing"), tmp_path, "https://example.com/a/b.git"
+        str(directory.with_name("missing")), tmp_path, "https://example.com/a/b.git"
     )
+    # the same package name outside the managed release root is a developer's checkout
+    other = tmp_path / "dev"
+    other.mkdir()
+    (other / "package.json").write_text(json.dumps(PI_PACKAGE))
+    assert not stage_release.is_pi_package(str(other), tmp_path, "https://example.com/a/b.git")
 
 
 def test_a_malformed_package_entry_refuses_to_rewrite_settings(tmp_path: Path) -> None:

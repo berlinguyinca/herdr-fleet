@@ -209,15 +209,16 @@ def test_a_dependency_missing_from_the_file_is_not_resolved_behind_its_back(
     source = make_source(tmp_path / "src", release_needing("fleetdep==1.0.0", "sneaky==1.0.0"))
     home = tmp_path / "home"
     home.mkdir()
-    stage(
-        home,
-        source.revision,
-        "herdr",
-        source.url,
-        python=sys.executable,
-        runner=run,
-        requirements=(reqs, sha(text)),
-    )
+    with pytest.raises(subprocess.CalledProcessError, match="sneaky"):  # pip check
+        stage(
+            home,
+            source.revision,
+            "herdr",
+            source.url,
+            python=sys.executable,
+            runner=run,
+            requirements=(reqs, sha(text)),
+        )
     assert imports(home, "fleetdep") and not imports(home, "sneaky")
 
 
@@ -268,7 +269,7 @@ def test_a_requirements_file_that_changed_since_the_lock_is_refused_before_pip_r
             runner=run,
             requirements=(reqs, sha(text)),
         )
-    assert not imports(home, "fleetdep")
+    assert not (home / ".venvs").exists()  # not even the venv was created
 
 
 def test_the_command_line_takes_both_flags_or_neither(tmp_path: Path) -> None:
