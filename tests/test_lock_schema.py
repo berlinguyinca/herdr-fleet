@@ -91,6 +91,21 @@ BAD_CASES: list[tuple[str, Mutator, str]] = [
         "repo_urls.pi-engineering",
     ),
     (
+        "repo_urls query",
+        _set(["repo_urls"], {"autospec": "https://git.example.com/a.git?x=1"}),
+        "repo_urls.autospec",
+    ),
+    (
+        "repo_urls fragment",
+        _set(["repo_urls"], {"autospec": "https://git.example.com/a.git#x"}),
+        "repo_urls.autospec",
+    ),
+    (
+        "repo_urls backtick",
+        _set(["repo_urls"], {"autospec": "https://git.example.com/`id`.git"}),
+        "repo_urls.autospec",
+    ),
+    (
         "repo_urls unknown repo",
         _set(["repo_urls"], {"mystery": "https://git.example.com/a.git"}),
         "mystery",

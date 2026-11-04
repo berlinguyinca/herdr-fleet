@@ -289,8 +289,15 @@ def test_herdr_engineering_does_not_need_toolchain(tmp_path: Path) -> None:
         'https://gw.example.com/"x',
         "https://gw.example.com/'x",
         "https://gw.example.com/a\\b",
-        "https://gw.example.com/%41",
         "https://gw.example.com/$HOME",
+        "https://gw.example.com/path?token=1",
+        "https://gw.example.com/path#fragment",
+        "https://gw.example.com/`id`",
+        "https://gw.example.com/%",  # a bare percent is not an encoding
+        "https://gw.example.com/%4",
+        "https://gw.example.com/%zz",
+        "https://gw.example.com/%{{1}}",
+        "https://gw.example.com/%24{x}",
     ],
 )
 @pytest.mark.parametrize("key", ["gateway", "control_plane"])
@@ -302,8 +309,24 @@ def test_service_urls_cannot_carry_templates_credentials_or_a_trailing_newline(
     _expect_error(doc, tmp_path, f"services.{key}.url")
 
 
+@pytest.mark.parametrize("url", ["https://gw.example.com/a%20b", "https://gw.example.com/%41%7e"])
+@pytest.mark.parametrize("key", ["gateway", "control_plane"])
+def test_strict_percent_encoding_is_accepted_because_it_is_inert_text(
+    tmp_path: Path, key: str, url: str
+) -> None:
+    doc = example_config()
+    _services(doc)[key] = {"url": url}  # type: ignore[index]
+    load_config(write_yaml(tmp_path / "c.yaml", doc))
+
+
 def test_external_url_also_rejects_a_trailing_newline_and_templates(tmp_path: Path) -> None:
-    for bad in ("https://ci.example.com\n", "https://ci.example.com/{{ 1 }}"):
+    for bad in (
+        "https://ci.example.com\n",
+        "https://ci.example.com/{{ 1 }}",
+        "https://ci.example.com/?a=1",
+        "https://ci.example.com/#x",
+        "https://ci.example.com/`id`",
+    ):
         doc = example_config()
         _services(doc)["ci_server"]["external_url"] = bad  # type: ignore[index]
         _hosts(doc)["host-a"]["roles"] = ["baseline"]  # type: ignore[index]
