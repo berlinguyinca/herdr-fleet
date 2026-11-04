@@ -2,7 +2,8 @@
 
 ## Layers
 
-- Unit and in-process CLI tests (`pytest`): no containers, no network. Real files, real
+- Unit and in-process CLI tests (`pytest`): no containers. Network only the first time, to cache the pinned Node and herdr releases
+  (see Test doubles). Real files, real
   `ansible-playbook` in check mode with a throwaway `HOME`. Coverage gate: 80% branch.
 - Container tests (`pytest -m container --no-cov`): marked `container` and `network`. They are
   excluded from the default run (`-m 'not container'` in `pyproject.toml`).
