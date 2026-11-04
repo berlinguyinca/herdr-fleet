@@ -31,3 +31,17 @@
     herdr_engineering_attested_root: >-
       {{ (herdr_engineering_describe.stdout | from_json).sourceRoot
       if (herdr_engineering_describe.rc | default(1)) == 0 else '' }}
+
+# What the venv was last installed from: the sha256 stage_release.py wrote after a pinned install.
+- name: requirements the venv was installed from
+  ansible.builtin.slurp:
+    src: "{{ herdr_engineering_requirements_marker }}"
+  register: herdr_engineering_marker
+  failed_when: false
+  check_mode: false
+
+- name: read the requirements marker
+  ansible.builtin.set_fact:
+    herdr_engineering_installed_requirements: >-
+      {{ (herdr_engineering_marker.content | b64decode | trim)
+      if herdr_engineering_marker.content is defined else '' }}

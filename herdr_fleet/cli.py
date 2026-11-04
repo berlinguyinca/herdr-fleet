@@ -11,7 +11,7 @@ from pathlib import Path
 
 from herdr_fleet.config import ConfigError, FleetConfig, FleetLock, load_config, load_lock
 from herdr_fleet.inventory import InventoryError, build_extra_vars, build_inventory
-from herdr_fleet.pins import fleet_pins
+from herdr_fleet.pins import fleet_notes, fleet_pins
 from herdr_fleet.plan import NO_CHANGES_NOTICE, build_plan
 from herdr_fleet.render import render_hosts
 from herdr_fleet.report import (
@@ -116,20 +116,27 @@ def _run_validate(errors: list[str], as_json: bool) -> int:
     return 0
 
 
-def _run_plan(config: FleetConfig | None, errors: list[str], as_json: bool) -> int:
-    if errors or config is None:
+def _notes_text(notes: list[str]) -> list[str]:
+    return [f"note: {n}" for n in notes]
+
+
+def _run_plan(
+    lock: FleetLock | None, config: FleetConfig | None, errors: list[str], as_json: bool
+) -> int:
+    if errors or config is None or lock is None:
         return _failure(errors, as_json)
     steps = build_plan(config)
+    notes = fleet_notes(fleet_pins(lock, config))
     payload: dict[str, object] = {
         "valid": True,
         "changes_made": False,
         "notice": NO_CHANGES_NOTICE,
+        "notes": notes,
         "applications": [asdict(s) for s in steps],
     }
     lines = [f"{s.step:>3}. {s.host}: {s.role}" for s in steps]
-    _emit(
-        payload, "\n".join(["Planned role applications:", *lines, "", NO_CHANGES_NOTICE]), as_json
-    )
+    text = ["Planned role applications:", *lines, "", *_notes_text(notes), NO_CHANGES_NOTICE]
+    _emit(payload, "\n".join(text), as_json)
     return 0
 
 
@@ -146,16 +153,25 @@ def _runner_errors(result: RunResult, reports: list[HostReport]) -> list[str]:
 
 
 def _emit_reports(
-    mode: str, reports: list[HostReport], errors: list[str], code: int, as_json: bool, note: str
+    mode: str,
+    reports: list[HostReport],
+    errors: list[str],
+    code: int,
+    as_json: bool,
+    note: str,
+    notes: list[str],
 ) -> None:
     payload: dict[str, object] = {
         "mode": mode,
         "exit_code": code,
         "errors": errors,
+        "notes": notes,
         "changes_made": sum(r.changed_count for r in reports),
         "hosts": [r.to_json() for r in reports],
     }
-    text = "\n".join([render_hosts(reports), *(f"error: {e}" for e in errors), "", note]).strip()
+    text = "\n".join(
+        [render_hosts(reports), *(f"error: {e}" for e in errors), *_notes_text(notes), "", note]
+    ).strip()
     _emit(payload, text, as_json)
 
 
@@ -182,7 +198,13 @@ def _run_check(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -
     code = EXIT_ERROR if errors else check_exit_code(reports)
     verdict = {0: "no drift", 2: "drift found", 1: "errors"}[code]
     _emit_reports(
-        "check", reports, errors, code, args.json, f"plan --check: {verdict} (exit {code})"
+        "check",
+        reports,
+        errors,
+        code,
+        args.json,
+        f"plan --check: {verdict} (exit {code})",
+        fleet_notes(pins),
     )
     return code
 
@@ -258,7 +280,9 @@ def _run_apply(args: argparse.Namespace, lock: FleetLock, config: FleetConfig) -
     total = sum(r.changed_count for r in reports)
     verdict = "passed" if code == EXIT_OK else "FAILED"
     note = f"apply: {total} change(s) made; per-host verification {verdict}"
-    _emit_reports("apply", reports, errors, code, args.json, f"{note}\n{APPLY_LIMITS}")
+    _emit_reports(
+        "apply", reports, errors, code, args.json, f"{note}\n{APPLY_LIMITS}", fleet_notes(pins)
+    )
     return code
 
 
@@ -270,7 +294,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "plan" and not args.check:
         if args.connection != "ssh" or args.limit:
             return _failure(["--connection and --limit only apply with --check"], args.json)
-        return _run_plan(config, errors, args.json)
+        return _run_plan(lock, config, errors, args.json)
     if errors or config is None or lock is None:
         return _failure(errors, args.json)
     return (

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import platform
@@ -32,6 +33,9 @@ KINDS = ("pi", "herdr")
 LOCK_STALE_SECONDS = 30
 LOCK_WAIT_SECONDS = 3.0
 LOCK_POLL_SECONDS = 0.1
+
+# Written into the venv after a pinned install: the sha256 of the requirements file used.
+REQUIREMENTS_MARKER = "herdr-fleet-requirements.sha256"
 
 # Read-only git must not take index.lock: a check run beside a developer's git would race with it.
 GIT_ENV_READ_ONLY = {"GIT_OPTIONAL_LOCKS": "0"}
@@ -209,12 +213,31 @@ def _install_pi(release, receipt, path_prefix, runner):
         runner([npm, "ci", "--include=dev", "--no-audit", "--no-fund"], cwd=str(release), env=env)
 
 
-def _install_herdr(home, release, python, runner):
+def file_sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _install_herdr(home, release, python, runner, requirements=None):
+    """``requirements`` is ``(path, sha256)`` of a hashed requirements file, or None (unpinned)."""
     venv = home / ".venvs/herdr-engineering"
+    marker = venv / REQUIREMENTS_MARKER
     if not (venv / "bin/python").exists():
         runner([python, "-m", "venv", str(venv)])
-    runner([str(venv / "bin/python"), "-m", "pip", "install", "--quiet", "--upgrade", str(release)])
+    pip = [str(venv / "bin/python"), "-m", "pip", "install", "--quiet"]
+    if requirements is None:
+        marker.unlink(missing_ok=True)
+        runner(pip + ["--upgrade", str(release)])
+        verify_herdr_distribution(home, release, runner)
+        return
+    path, expected = requirements
+    if file_sha256(path) != expected:
+        raise RuntimeError("Requirements file does not match its pinned sha256; not installing")
+    # Every dependency is verified against the file's hashes; the release itself is then installed
+    # without letting pip resolve anything else.
+    runner(pip + ["--require-hashes", "-r", str(path)])
+    runner(pip + ["--no-deps", "--upgrade", str(release)])
     verify_herdr_distribution(home, release, runner)
+    marker.write_text(expected + "\n")
 
 
 def detect_indent(raw):
@@ -269,7 +292,17 @@ def _write_settings(pending):
         settings_lock.rmdir()
 
 
-def stage(home, revision, kind, repository, *, python="python3", path_prefix=None, runner=run):
+def stage(
+    home,
+    revision,
+    kind,
+    repository,
+    *,
+    python="python3",
+    path_prefix=None,
+    runner=run,
+    requirements=None,
+):
     validate_revision(revision)
     home = home.expanduser().resolve()
     root = home / ".local/share/herdr-engineering" / kind
@@ -283,7 +316,7 @@ def stage(home, revision, kind, repository, *, python="python3", path_prefix=Non
         if kind == "pi":
             _install_pi(release, receipt, path_prefix, runner)
         else:
-            _install_herdr(home, release, python, runner)
+            _install_herdr(home, release, python, runner, requirements)
         verify_checkout(release, revision, runner)
         result = {"revision": revision, "sourceRoot": str(release)}
         atomic_json(receipt, result)
@@ -331,6 +364,8 @@ def build_parser():
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--python", default="python3", help="interpreter that creates the venv")
     parser.add_argument("--path-prefix", help="directory searched first for npm and node")
+    parser.add_argument("--requirements", type=Path, help="hashed requirements file (herdr kind)")
+    parser.add_argument("--requirements-sha256", help="sha256 the requirements file must have")
     parser.add_argument("--describe", action="store_true")
     return parser
 
@@ -346,6 +381,10 @@ def main(argv=None):
         parser.error("--revision is required for staging")
     if not args.repository:
         parser.error("--repository is required for staging")
+    if bool(args.requirements) != bool(args.requirements_sha256):
+        parser.error("--requirements and --requirements-sha256 go together")
+    if args.requirements and args.kind != "herdr":
+        parser.error("--requirements applies to --kind herdr only")
     result = stage(
         args.home,
         args.revision,
@@ -353,6 +392,7 @@ def main(argv=None):
         args.repository,
         python=args.python,
         path_prefix=args.path_prefix,
+        requirements=(args.requirements, args.requirements_sha256) if args.requirements else None,
     )
     print(json.dumps(result))
     return 0

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from herdr_fleet import sections
 from herdr_fleet.config import FleetConfig, FleetLock
 from herdr_fleet.fingerprint import Difference, Fingerprint, FingerprintError
+from herdr_fleet.python_requirements import python_requirements
 from herdr_fleet.repos import repo_url
 
 ROLE = "herdr-engineering"
@@ -19,6 +20,8 @@ class HerdrEngineeringPins:
     repository: str | None  # None when no host has the role, so the lock needs no repo_urls
     gateway_url: str | None
     control_plane_url: str | None
+    requirements_path: str | None = None  # hashed requirements shipped beside the lock
+    requirements_sha256: str | None = None
 
 
 def herdr_engineering_pins(
@@ -27,11 +30,25 @@ def herdr_engineering_pins(
     """``required``: some host has the role, so the lock must say where to clone from."""
     repos = lock.data["repos"]
     assert isinstance(repos, dict)
+    requirements = python_requirements(lock, ROLE) if required else None
     return HerdrEngineeringPins(
         revision=str(repos[ROLE]),
         repository=repo_url(lock, ROLE) if required else None,
         gateway_url=config.gateway_url,
         control_plane_url=config.control_plane_url,
+        requirements_path=str(requirements.path) if requirements else None,
+        requirements_sha256=requirements.sha256 if requirements else None,
+    )
+
+
+def unpinned_python_note(pins: HerdrEngineeringPins) -> str | None:
+    """Informational: the role is used but its Python dependencies are not hash-pinned."""
+    if pins.repository is None or pins.requirements_sha256 is not None:
+        return None
+    return (
+        "unpinned python dependencies: herdr-engineering's venv resolves its Python dependencies "
+        "from PyPI at install time; add python_requirements.herdr-engineering (a hashed "
+        "requirements file and its sha256) to fleet.lock to pin them"
     )
 
 
@@ -67,6 +84,7 @@ class HerdrEngineeringFingerprint:
     fabric_service: str  # "active" | "inactive" | "unmanaged"
     build_gate_sha256: str | None
     build_gate_release_sha256: str | None
+    python_requirements_sha256: str | None = None  # what the venv was installed from, if pinned
 
     @classmethod
     def from_json(cls, raw: sections.Section) -> HerdrEngineeringFingerprint:
@@ -88,6 +106,9 @@ class HerdrEngineeringFingerprint:
             build_gate_sha256=sections.optional_text(SECTION, raw, "build_gate_sha256"),
             build_gate_release_sha256=sections.optional_text(
                 SECTION, raw, "build_gate_release_sha256"
+            ),
+            python_requirements_sha256=sections.optional_text(
+                SECTION, raw, "python_requirements_sha256"
             ),
         )
 
@@ -113,6 +134,17 @@ def compare_herdr_engineering(fp: Fingerprint, pins: HerdrEngineeringPins) -> li
     if found.revision != pins.revision:
         differences.append(
             Difference(f"{ROLE} revision", pins.revision, found.revision or "missing")
+        )
+    if (
+        pins.requirements_sha256 is not None
+        and found.python_requirements_sha256 != pins.requirements_sha256
+    ):
+        differences.append(
+            Difference(
+                "python requirements",
+                f"sha256 {pins.requirements_sha256}",
+                found.python_requirements_sha256 or "missing",
+            )
         )
     if not found.venv_entry_present:
         differences.append(Difference("herdr-eng", "the venv entry point", "missing"))

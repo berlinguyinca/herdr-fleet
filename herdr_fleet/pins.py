@@ -18,6 +18,7 @@ from herdr_fleet.herdr_engineering import (
 from herdr_fleet.herdr_engineering import (
     HerdrEngineeringPins,
     herdr_engineering_pins,
+    unpinned_python_note,
 )
 from herdr_fleet.pi_runtime import ROLE as PI_RUNTIME_ROLE
 from herdr_fleet.pi_runtime import PiRuntimePins, pi_runtime_pins
@@ -46,3 +47,9 @@ def fleet_pins(lock: FleetLock, config: FleetConfig) -> FleetPins:
         herdr_engineering=herdr_engineering_pins(lock, config, required=needed),
         pi_runtime=pi_runtime_pins(lock, config, required=_on_a_host(config, PI_RUNTIME_ROLE)),
     )
+
+
+def fleet_notes(pins: FleetPins) -> list[str]:
+    """Informational findings that are not drift: they never change an exit code."""
+    notes = [unpinned_python_note(pins.herdr_engineering)]
+    return [note for note in notes if note is not None]

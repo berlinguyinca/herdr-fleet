@@ -14,6 +14,14 @@ herdr_engineering_entry: "{{ herdr_engineering_venv }}/bin/herdr-eng"
 herdr_engineering_bin_dir: "{{ herdr_engineering_home }}/.local/bin"
 herdr_engineering_shim: "{{ herdr_engineering_bin_dir }}/herdr-eng"
 
+# Optional hashed requirements (fleet.lock python_requirements.herdr-engineering). Both null unless
+# the lock sets the field; then herdr-fleet supplies them as extra-vars. The file is copied next to
+# the helper and installed with `pip install --require-hashes -r`.
+herdr_engineering_requirements_src: null
+herdr_engineering_requirements_sha256: null
+herdr_engineering_requirements_file: "{{ herdr_engineering_helper_dir }}/herdr-engineering.requirements.txt"
+herdr_engineering_requirements_marker: "{{ herdr_engineering_venv }}/herdr-fleet-requirements.sha256"
+
 # Supplied from fleet.lock and fleet-config.yaml by herdr-fleet (extra-vars), never defaulted here:
 #   herdr_engineering_revision, herdr_engineering_repository, herdr_engineering_gateway_url,
 #   herdr_engineering_control_plane_url (null when not configured), fleet_stage_release_src

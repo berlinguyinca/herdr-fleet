@@ -113,6 +113,14 @@ Repository clone URLs are pinned in the lock's optional `repo_urls` (`herdr-engi
 `pi-engineering`, `autospec`; HTTPS only). They have no built-in defaults: a URL change is a trust
 change, so a role that clones a repository fails naming the missing key.
 
+Python dependencies of `herdr-engineering` can be pinned with the lock's optional
+`python_requirements.herdr-engineering` (`file`: a hashed requirements file shipped next to the
+lock; `sha256`: its checksum). The stager and the role then run `pip install --require-hashes -r`
+and `pip install --no-deps`, the fingerprint reports the checksum and `plan --check` names a
+mismatch. Without the field nothing changes and `plan` prints the note "unpinned python
+dependencies". First understood by herdr-fleet 0.1.0. See
+`docs/follow-ups/python-dependencies-are-not-pinned.md` for what remains.
+
 Not automated: systemd user units and linger (no user manager in the test containers) and macOS.
 Run `plan --check` and `apply` once on a real Debian host and a real Mac as a manual canary before
 rolling a lock to the fleet.

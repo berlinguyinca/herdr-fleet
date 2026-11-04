@@ -1,6 +1,7 @@
 # Follow-up: the Python dependencies of herdr-engineering are not pinned or hashed
 
-Status: open. Found in review of slice 3 (finding 5).
+Status: herdr-fleet side done; one item remains open (herdr-engineering must commit its own
+lock). Found in review of slice 3 (finding 5).
 
 ## The gap
 
@@ -23,10 +24,25 @@ its dependency set.
 
 ## Remedy
 
-1. herdr-engineering commits a hashed lock (`uv pip compile --generate-hashes`, or pip-tools) for
-   its runtime dependencies.
-2. `stage_release.py` installs from it with `pip install --require-hashes -r <lock>` and then
-   `pip install --no-deps <release dir>`.
-3. The fingerprint reports the lock's sha256 and `plan --check` names a mismatch.
+Done in herdr-fleet:
 
-Until then, treat a herdr-engineering host as pinned to its source only.
+1. The lock has an optional `python_requirements.herdr-engineering` field: `file` (a hashed
+   requirements file shipped next to `fleet.lock`, inside its directory) and its `sha256`.
+2. `stage_release.py` (`--requirements`, `--requirements-sha256`) and the herdr-engineering role
+   verify the file's sha256, run `pip install --require-hashes -r <file>` and then
+   `pip install --no-deps <release dir>`. A marker in the venv records the requirements sha256.
+3. The fingerprint reports the requirements sha256 and `plan --check` names a mismatch
+   ("python requirements").
+4. With the field absent, behaviour is unchanged and `plan`, `plan --check` and `apply` print the
+   informational note "unpinned python dependencies" (JSON `notes`).
+5. Tested with real pip against a local wheel directory and index (`tests/wheels.py`,
+   `tests/test_python_requirements*.py`).
+
+Still open:
+
+- herdr-engineering has to commit its own hashed lock (`uv pip compile --generate-hashes`, or
+  pip-tools) so that fleet.lock can point at a real file. Until a lock carries that field, treat
+  a herdr-engineering host as pinned to its source only.
+- Known limit: pip build isolation fetches build-backend requirements (for example
+  `setuptools`) unhashed when it builds the release directory. `--no-deps` stops dependency
+  resolution but not that fetch. Pre-building a wheel would close it.

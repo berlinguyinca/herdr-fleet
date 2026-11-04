@@ -27,6 +27,13 @@
         "autospec": {"$ref": "#/$defs/repo_url"}
       }
     },
+    "python_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "herdr-engineering": {"$ref": "#/$defs/requirements_file"}
+      }
+    },
     "clis": {
       "type": "object",
       "additionalProperties": false,
@@ -56,6 +63,18 @@
     },
     "repo_url": {"type": "string", "pattern": "^https://[^\\s@/{}\"'\\\\%$][^\\s@{}\"'\\\\%$]*$(?!\\n)"},
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "requirements_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "sha256"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$(?!\\n)"
+        },
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
     "commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
     "binary": {
       "type": "object",

@@ -128,5 +128,6 @@
       'fabric_unit_present': fp_herdr_engineering_unit.content is defined,
       'fabric_unit_matches_release': fp_herdr_engineering_unit_ok | bool,
       'fabric_service': fp_herdr_engineering_service,
+      'python_requirements_sha256': (herdr_engineering_installed_requirements if herdr_engineering_installed_requirements | length > 0 else None),
       'build_gate_sha256': (fp_herdr_engineering_gate.stat.checksum if fp_herdr_engineering_gate.stat.exists else None),
       'build_gate_release_sha256': (fp_herdr_engineering_gate_release.stat.checksum if fp_herdr_engineering_gate_release.stat.exists else None)}}) }}

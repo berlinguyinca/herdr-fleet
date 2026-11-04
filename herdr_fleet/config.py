@@ -51,6 +51,7 @@ class FleetConfig:
 class FleetLock:
     version: int
     data: JsonObject
+    directory: Path | None = None  # where the lock was read from; its shipped files live here
 
 
 def _schema(name: str) -> JsonObject:
@@ -106,7 +107,7 @@ def load_lock(path: Path) -> FleetLock:
     doc = _read_document(path)
     _check_version(path, doc)
     _validate(path, doc, "fleet-lock.schema.json")
-    return FleetLock(version=SUPPORTED_VERSION, data=doc)
+    return FleetLock(version=SUPPORTED_VERSION, data=doc, directory=path.resolve().parent)
 
 
 def _section(doc: Mapping[str, object], key: str) -> JsonObject:

@@ -16,7 +16,10 @@ script or timer (spec 0001, "Extending the fleet").
    a lock that uses the key ("additional property"), which is acceptable because the lock pins
    `herdr_fleet.version`. Repository clone URLs live in the lock's optional `repo_urls` (a URL
    change is a trust change) and have no built-in defaults; `herdr_fleet/repos.py:repo_url`
-   fails with a message naming the key when a role needs one that is missing.
+   fails with a message naming the key when a role needs one that is missing. A role that installs
+   Python packages should take an optional hashed requirements file the same way
+   (`python_requirements`, see `herdr_fleet/python_requirements.py`) and report the note
+   `unpinned_python_note` while it is absent.
 2. **Role name.** Add it to the `roles` enum in `herdr_fleet/schemas/fleet-config.schema.json`
    and add a row to the spec's role table.
 3. **Order.** Put it in `ROLE_ORDER` in `herdr_fleet/roles.py` after the roles it depends on.

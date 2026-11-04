@@ -123,12 +123,19 @@ def _herdr_vars(pins: HerdrPins) -> JsonObject:
 def _herdr_engineering_vars(pins: HerdrEngineeringPins) -> JsonObject:
     if pins.repository is None:  # no host has the role: nothing will read these
         return {}
+    pinned: JsonObject = {}
+    if pins.requirements_sha256 is not None:
+        pinned = {
+            "herdr_engineering_requirements_src": pins.requirements_path,
+            "herdr_engineering_requirements_sha256": pins.requirements_sha256,
+        }
     return {
         "herdr_engineering_revision": pins.revision,
         "herdr_engineering_repository": pins.repository,
         "herdr_engineering_gateway_url": pins.gateway_url,
         "herdr_engineering_control_plane_url": pins.control_plane_url,
         "fleet_stage_release_src": str(resources.files("herdr_fleet").joinpath("stage_release.py")),
+        **pinned,
     }
 
 

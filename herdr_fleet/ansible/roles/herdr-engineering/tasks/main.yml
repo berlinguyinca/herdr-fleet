@@ -70,31 +70,48 @@
     dest: "{{ herdr_engineering_helper }}"
     mode: "0700"
 
+- name: require both halves of the requirements pin
+  ansible.builtin.assert:
+    that:
+      - (herdr_engineering_requirements_sha256 is none) == (herdr_engineering_requirements_src is none)
+      - herdr_engineering_requirements_sha256 is none or herdr_engineering_requirements_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      herdr_engineering_requirements_src and herdr_engineering_requirements_sha256 come together
+      from fleet.lock python_requirements.herdr-engineering
+    quiet: true
+
+# 0600: the hashed file is read by the stager only. The stager re-checks its sha256 before pip.
+- name: shipped hashed requirements
+  ansible.builtin.copy:
+    src: "{{ herdr_engineering_requirements_src }}"
+    dest: "{{ herdr_engineering_requirements_file }}"
+    mode: "0600"
+  when: herdr_engineering_requirements_sha256 is not none
+
 - name: probe the staged release
   ansible.builtin.include_tasks: probe.yml
 
+# Pending when the release is not the pinned one, or when a pinned requirements file is not what
+# the venv was installed from. Without the lock field the requirements are not part of the answer.
 - name: work out whether the pinned release is staged
   ansible.builtin.set_fact:
-    herdr_engineering_pending: "{{ herdr_engineering_attested != herdr_engineering_revision }}"
+    herdr_engineering_pending: >-
+      {{ herdr_engineering_attested != herdr_engineering_revision
+      or (herdr_engineering_requirements_sha256 is not none
+      and herdr_engineering_installed_requirements != herdr_engineering_requirements_sha256) }}
 
 # The helper refuses a dirty or wrong-commit checkout and never edits an existing release, so a
 # new pin adds a release and keeps the old one. Check mode never runs git or pip; the marker
 # below reports the pending stage instead.
 - name: stage herdr-engineering {{ herdr_engineering_revision[:12] }}
   ansible.builtin.command:
-    argv:
-      - "{{ herdr_engineering_python }}"
-      - "{{ herdr_engineering_helper }}"
-      - --kind
-      - herdr
-      - --revision
-      - "{{ herdr_engineering_revision }}"
-      - --repository
-      - "{{ herdr_engineering_repository }}"
-      - --python
-      - "{{ herdr_engineering_python }}"
-      - --home
-      - "{{ herdr_engineering_home }}"
+    argv: >-
+      {{ [herdr_engineering_python, herdr_engineering_helper, '--kind', 'herdr',
+      '--revision', herdr_engineering_revision, '--repository', herdr_engineering_repository,
+      '--python', herdr_engineering_python, '--home', herdr_engineering_home]
+      + ([] if herdr_engineering_requirements_sha256 is none else
+      ['--requirements', herdr_engineering_requirements_file,
+      '--requirements-sha256', herdr_engineering_requirements_sha256]) }}
   register: herdr_engineering_staged
   changed_when: true
   when: not ansible_check_mode and herdr_engineering_pending
