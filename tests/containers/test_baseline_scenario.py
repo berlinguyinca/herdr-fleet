@@ -51,6 +51,23 @@ def box() -> Iterator[DockerRuntime]:
         print(f"[container-harness] removed: {', '.join(runtime.stop()) or 'nothing'}")
 
 
+@pytest.fixture(scope="module")
+def sudo_box() -> Iterator[DockerRuntime]:
+    """A container whose image has sudo (granting nothing yet); the tests write the sudoers rule."""
+    reason = DockerRuntime.unavailable_reason()
+    if reason is not None:
+        pytest.skip(f"docker unavailable: {reason}")
+    runtime = DockerRuntime(extra_caps=APT_CAPS, with_sudo=True)
+    try:
+        runtime.start()
+        boot = runtime.sh(BOOTSTRAP, timeout=1200)
+        assert boot.returncode == 0, f"bootstrap failed:\n{boot.stdout}\n{boot.stderr}"
+        runtime.write_file(CONFIG, CONFIG_TEXT)
+        yield runtime
+    finally:
+        print(f"[container-harness] removed: {', '.join(runtime.stop()) or 'nothing'}")
+
+
 def cli(command: str, *extra: str) -> list[str]:
     return [
         "herdr-fleet", command, "--lock", LOCK, "--config", CONFIG,
@@ -109,3 +126,50 @@ def test_baseline_installs_through_real_apt_only_as_root(box: DockerRuntime) -> 
     done = apply(box)
     assert done.returncode == 0, done.stdout + done.stderr
     assert check(box).returncode == 0
+
+
+SUDOERS = "/etc/sudoers.d/fleet"
+APT_UPDATE = "/usr/bin/apt-get update -q"
+APT_INSTALL_JQ = "/usr/bin/apt-get install -y --no-install-recommends -- jq"
+
+
+def grant(box: DockerRuntime, *commands: str) -> None:
+    rule = f"fleet ALL=(root) NOPASSWD: {', '.join(commands)}\n" if commands else ""
+    done = box.exec_as_root(
+        ["bash", "-c", f"printf %s '{rule}' > {SUDOERS} && chmod 0440 {SUDOERS} && /usr/sbin/visudo -c -q"]
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_a_restricted_sudoers_that_allows_exactly_the_commands_installs_without_become(
+    sudo_box: DockerRuntime,
+) -> None:
+    box = sudo_box
+    assert box.sh("command -v sudo").returncode == 0 and box.exec(["id", "-u"]).stdout == "1000\n"
+    assert not has_jq(box)
+
+    # No sudo rights at all: refused with the one command to run by hand, nothing installed.
+    grant(box)
+    denied = apply(box)
+    assert denied.returncode != 0
+    assert "sudo apt-get install -y jq" in denied.stdout + denied.stderr
+    assert not has_jq(box)
+
+    # Rights for the update but not for the install of jq: the install probe refuses before
+    # anything privileged runs.
+    grant(box, APT_UPDATE)
+    partial = apply(box)
+    assert partial.returncode != 0
+    assert "sudo apt-get install -y jq" in partial.stdout + partial.stderr
+    assert not has_jq(box)
+
+    # `sudo -n true` is refused here (only these two commands are allowed), yet the probes and
+    # the privileged tasks use the very same `sudo -n -- CMD` argv, so apply succeeds.
+    grant(box, APT_UPDATE, APT_INSTALL_JQ)
+    assert box.sh("sudo -n true").returncode != 0
+    installed = apply(box)
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    assert has_jq(box)
+    again = apply(box)
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert json.loads(again.stdout)["changes_made"] == 0

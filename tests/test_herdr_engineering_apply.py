@@ -229,12 +229,12 @@ def test_a_missing_pin_variable_fails_instead_of_guessing(
     assert "do not run this role by hand" in result.stdout
 
 
-def test_no_role_uses_privilege_escalation_except_baseline() -> None:
+def test_no_role_uses_become() -> None:
     roles = Path(__file__).resolve().parent.parent / "herdr_fleet/ansible/roles"
     offenders = [
         str(p.relative_to(roles))
         for p in roles.rglob("*.yml")
-        if p.relative_to(roles).parts[0] != "baseline" and "become" in p.read_text()
+        if "become:" in p.read_text() or "become_" in p.read_text()
     ]
     assert offenders == []
 

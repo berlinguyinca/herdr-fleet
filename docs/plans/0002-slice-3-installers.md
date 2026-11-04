@@ -214,10 +214,14 @@ attestation the coordinator relies on).
 
 ### 2.6 Root, linger and the `baseline` privilege rule
 
-- `baseline` is the only role with `become`. Privileged tasks are exactly: `apt-get update`, Debian package install and
-  `loginctl enable-linger <user>`. Each is preceded by a read-only `sudo -n -l <that command>` probe
-  (not `sudo -n true`, which a command-restricted sudoers refuses although the real command works), so check mode
-  and a fully converged host never need root or a password.
+- `baseline` is the only role that escalates, and it does not use `become`. Privileged tasks are exactly:
+  `apt-get update`, Debian package install and `loginctl enable-linger <user>`. Each is preceded by a read-only
+  `sudo -n -l -- <that command>` probe and then executed through `command` as `sudo -n -- <that command>` (root
+  runs it without a prefix). Probe and executed argv are therefore the same, so a command-restricted sudoers that
+  allows only these commands works (proved with a real sudo in a Docker container); `sudo -n true` and Ansible's
+  `become` (`sudo -H -S -n -u root /bin/sh -c ...`) are different commands that such a sudoers refuses. Check mode
+  and a fully converged host never need root or a password. Because sudo resets the environment,
+  `DEBIAN_FRONTEND=noninteractive` applies only when running as root.
 - Missing packages under check mode produce a pending change naming the packages
   (`install packages: git, xz-utils`). Under apply without usable sudo the role fails with
   "baseline needs root to install: <names>; run `sudo apt-get install <names>` once, then re-run apply".
@@ -537,7 +541,7 @@ Acceptance: staging only (assertions in section 7); toolchain Node used for `npm
 releases preserved; unrelated Pi settings preserved.
 
 **T8 - `baseline` role.**
-Files: role `baseline` (probe tasks, explicit `become` only on install and linger tasks),
+Files: role `baseline` (probe tasks, explicit `sudo -n --` argv prefix on the install and linger tasks, no `become`),
 `herdr_fleet/baseline.py`, wiring, tests, harness `user=` option if needed.
 Acceptance: check mode and converged hosts need no sudo; failure message names packages and remedy.
 

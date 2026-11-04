@@ -258,12 +258,16 @@ def tasks_of(path: Path) -> list[dict[str, Any]]:
     return out
 
 
-def test_only_the_apt_and_linger_tasks_carry_privilege_escalation() -> None:
+def test_no_task_uses_become_and_only_three_commands_escalate_through_sudo() -> None:
+    # `become` runs `sudo -H -S -n -u root /bin/sh -c ...`, which a restricted sudoers refuses even
+    # when the probed command is allowed. The privileged commands carry an explicit
+    # `sudo -n --` prefix instead, so the probe and the executed command are the same argv.
     escalated: dict[str, str] = {}
     for path in sorted((ROLE / "tasks").glob("*.yml")):
         for task in tasks_of(path):
-            if any(key.startswith("become") for key in task):
-                (command,) = [v for k, v in task.items() if k == "ansible.builtin.command"]
+            assert not any(key.startswith("become") for key in task), task["name"]
+            command = task.get("ansible.builtin.command")
+            if isinstance(command, dict) and "baseline_priv" in str(command.get("argv")):
                 escalated[str(task["name"])] = str(command["argv"])
     assert len(escalated) == 3
     joined = " ".join(escalated.values())
@@ -311,7 +315,7 @@ def probe_argvs() -> dict[str, list[str]]:
 
 def test_the_privilege_probes_ask_sudo_about_the_commands_that_will_really_run() -> None:
     # `sudo -n true` fails under a sudoers that allows only apt-get and loginctl although the real
-    # become would work; `sudo -n -l CMD` asks exactly about the command and never runs it.
+    # command would work; `sudo -n -l -- CMD` asks exactly about the command and never runs it.
     argvs = probe_argvs()
     assert set(argvs) == {
         "baseline_sudo_probe_apt_update",
