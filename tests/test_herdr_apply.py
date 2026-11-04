@@ -1,14 +1,16 @@
 """Real ``apply``, ``check`` and ``verify`` of the herdr role against a local HTTP mirror.
 
-The mirror serves a tiny executable script named like the real release asset, so the whole role
-(checksum-verified download, cache, install, fingerprint probes) runs hermetically in a throwaway
-HOME. The real herdr binary is never run: it talks to the real home's socket.
+The mirror serves the real, pinned herdr release binary (tests/artifacts.py downloads it once and
+verifies its sha256), so the whole role (checksum-verified download, cache, install, fingerprint
+probes) runs the real thing in a throwaway HOME. herdr resolves its socket from the account's real
+home, not from ``$HOME``, so every test also points its socket variables at a throwaway directory
+(``isolate_herdr``): the real binary is only asked for ``--version`` and ``status``, finds no
+server, and never reaches the operator's. A running (possibly stale) server is not reproduced
+here, see ``tests/test_herdr.py`` for that parsing and ``docs/testing.md``.
 """
 
 from __future__ import annotations
 
-import hashlib
-import platform
 import stat
 import subprocess
 from collections.abc import Iterator
@@ -18,21 +20,13 @@ from pathlib import Path
 import pytest
 
 from herdr_fleet.fingerprint import Fingerprint
-from herdr_fleet.herdr import HERDR_ASSETS, HerdrPins, compare_herdr
+from herdr_fleet.herdr import HerdrPins, compare_herdr
 from herdr_fleet.report import ParsedEvents, parse_events
 from herdr_fleet.runner import Mode, run_playbook
-from herdr_fleet.toolchain import platform_key
+from tests.artifacts import HERDR_VERSION as VERSION
+from tests.artifacts import isolate_herdr, real_herdr
 from tests.helpers import example_extra_vars
 from tests.mirror import RunningMirror, serve_files
-
-VERSION = "0.9.1"
-FAKE_HERDR = f"""#!/bin/sh
-case "$1" in
-  --version) echo "herdr {VERSION}" ;;
-  status)
-    printf 'client:\\n  version: {VERSION}\\nserver:\\n  pid: 1\\n  version: 0.9.0\\n' ;;
-esac
-"""
 
 LOCAL = {
     "all": {
@@ -52,6 +46,7 @@ class Release:
     mirror: RunningMirror
     platform: str
     sha256: str
+    payload: bytes
 
     @property
     def pins(self) -> HerdrPins:
@@ -59,14 +54,12 @@ class Release:
 
 
 @pytest.fixture
-def release() -> Iterator[Release]:
-    key = platform_key(platform.system(), platform.machine())
-    if key is None:
-        pytest.skip("unsupported platform for the fake herdr release")
-    payload = FAKE_HERDR.encode()
-    path = f"/v{VERSION}/{HERDR_ASSETS[key]}"
-    with serve_files({path: payload}) as running:
-        yield Release(running, key, hashlib.sha256(payload).hexdigest())
+def release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Release]:
+    herdr = real_herdr()
+    isolate_herdr(monkeypatch, tmp_path / "herdr-isolated")
+    payload = herdr.binary.read_bytes()
+    with serve_files({f"/v{herdr.version}/{herdr.asset}": payload}) as running:
+        yield Release(running, herdr.platform, herdr.sha256[herdr.platform], payload)
 
 
 def variables(release: Release, sha256: str | None = None) -> dict[str, object]:
@@ -113,14 +106,14 @@ def test_apply_installs_the_pinned_binary_and_verify_is_clean(
 ) -> None:
     converge(tmp_path, release, Mode.APPLY, monkeypatch)
     binary = installed(tmp_path)
-    assert binary.read_text() == FAKE_HERDR
+    assert binary.read_bytes() == release.payload
     assert stat.S_IMODE(binary.stat().st_mode) == 0o755
     assert not binary.is_symlink()
     fp = verify(tmp_path, release, monkeypatch)
     assert compare_herdr(fp, release.pins) == []
     section = fp.sections["herdr"]
     assert section["version"] == VERSION
-    assert section["server_version"] == "0.9.0"  # running server is older: reported, not drift
+    assert section["server_version"] is None  # no server runs in the throwaway sockets
 
 
 def test_second_apply_changes_nothing_and_downloads_nothing(
@@ -157,7 +150,7 @@ def test_hand_replaced_binary_is_reported_as_drift(
 ) -> None:
     converge(tmp_path, release, Mode.APPLY, monkeypatch)
     binary = installed(tmp_path)
-    binary.write_text(FAKE_HERDR + "# edited\n")
+    binary.write_bytes(release.payload + b"# edited\n")
     fp = verify(tmp_path, release, monkeypatch)
     messages = [d.message for d in compare_herdr(fp, release.pins)]
     assert any(m.startswith("herdr binary: expected sha256 ") for m in messages)
@@ -170,7 +163,7 @@ def test_apply_repairs_a_hand_replaced_binary_from_the_cache(
     installed(tmp_path).write_text("#!/bin/sh\necho tampered\n")
     before = len(release.mirror.requests)
     events = converge(tmp_path, release, Mode.APPLY, monkeypatch)
-    assert installed(tmp_path).read_text() == FAKE_HERDR
+    assert installed(tmp_path).read_bytes() == release.payload
     assert "put the verified herdr 0.9.1 in place" in changed(events)
     assert len(release.mirror.requests) == before  # the checksum-verified cache was enough
 
@@ -209,7 +202,7 @@ def test_rolling_back_to_a_cached_version_needs_no_network(
     installed(tmp_path).unlink()
     before = len(release.mirror.requests)
     converge(tmp_path, release, Mode.APPLY, monkeypatch)
-    assert installed(tmp_path).read_text() == FAKE_HERDR
+    assert installed(tmp_path).read_bytes() == release.payload
     assert len(release.mirror.requests) == before
 
 
@@ -250,7 +243,7 @@ def test_a_symlinked_binary_is_drift_and_apply_replaces_the_link_not_its_target(
     assert any(m.startswith("herdr binary: expected sha256 ") for m in messages)
     assert "pending" in " ".join(changed(converge(tmp_path, release, Mode.CHECK, monkeypatch)))
     converge(tmp_path, release, Mode.APPLY, monkeypatch)
-    assert not link.is_symlink() and link.read_text() == FAKE_HERDR
+    assert not link.is_symlink() and link.read_bytes() == release.payload
     assert elsewhere.read_text() == "#!/bin/sh\necho somebody else's herdr\n"
     assert compare_herdr(verify(tmp_path, release, monkeypatch), release.pins) == []
 
@@ -262,7 +255,7 @@ def test_a_dangling_symlink_is_replaced_too(
     link.parent.mkdir(parents=True)
     link.symlink_to(tmp_path / "gone")
     converge(tmp_path, release, Mode.APPLY, monkeypatch)
-    assert not link.is_symlink() and link.read_text() == FAKE_HERDR
+    assert not link.is_symlink() and link.read_bytes() == release.payload
 
 
 def test_a_directory_at_the_binary_path_is_reported_and_apply_refuses_with_a_clear_message(

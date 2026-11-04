@@ -10,17 +10,29 @@ import json
 import os
 import pty
 import stat
+import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
 
 from herdr_fleet.cli import main
 from herdr_fleet.runner import ansible_dir, ansible_playbook_executable
+from tests.artifacts import real_node
 from tests.helpers import LOCK_EXAMPLE, example_config, example_lock, write_yaml
+from tests.local_registry import registry_files
+from tests.mirror import serve_files
+
+PACKAGES = {
+    "@earendil-works/pi-coding-agent": ("1.2.3", "pi"),
+    "@openai/codex": ("0.9.0", "codex"),
+}
 
 
-def inputs(tmp_path: Path, *, jump_host: str | None = None) -> list[str]:
+def inputs(
+    tmp_path: Path, *, jump_host: str | None = None, lock: dict[str, object] | None = None
+) -> list[str]:
     config = example_config()
     host_b = config["hosts"]["host-b"]  # type: ignore[index]
     host_b["roles"] = ["toolchain"]
@@ -30,7 +42,7 @@ def inputs(tmp_path: Path, *, jump_host: str | None = None) -> list[str]:
     config["hosts"] = {"host-a": config["hosts"]["host-a"], "host-b": host_b}  # type: ignore[index]
     config["hosts"]["host-a"]["roles"] = ["baseline", "toolchain"]  # type: ignore[index]
     config["services"] = {}
-    lock = example_lock()
+    lock = lock if lock is not None else example_lock()
     return [
         "--lock",
         str(write_yaml(tmp_path / "fleet.lock", lock)),
@@ -155,33 +167,58 @@ def test_apply_stops_at_the_first_failed_host_and_reports_the_rest_not_attempted
 
 
 def test_apply_that_made_changes_and_verifies_exits_zero(
-    tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Node and both CLIs are already in place (no network); apply still creates links and shims.
+    """Node and both CLIs are already in place; apply still creates links and shims.
 
-    Changes made by apply show up as drift in the apply pass; only failure may stop the run, and
-    the per-host verification that follows must pass.
+    The prefix is prepared with the real pinned Node (extracted from its release tarball) and a
+    real ``npm install --global`` of the two pinned CLIs from a local registry. Changes made by
+    apply show up as drift in the apply pass; only failure may stop the run, and the per-host
+    verification that follows must pass.
     """
+    node = real_node()
     prefix = home / ".local/share/herdr-fleet/toolchain"
-    node = prefix / "node/22.11.0/bin"
-    node.mkdir(parents=True)
-    for name, body in (("node", "#!/bin/sh\necho v22.11.0\n"), ("npm", ""), ("npx", "")):
-        (node / name).write_text(body or "#!/bin/sh\n")
-        (node / name).chmod(0o755)
-    (prefix / "bin").mkdir()
-    for package, command, version in (
-        ("@earendil-works/pi-coding-agent", "pi", "1.2.3"),
-        ("@openai/codex", "codex", "0.9.0"),
-    ):
-        pkg_dir = prefix / "lib/node_modules" / package
-        pkg_dir.mkdir(parents=True)
-        (pkg_dir / "package.json").write_text(f'{{"version": "{version}"}}')
-        (prefix / "bin" / command).write_text("#!/bin/sh\nexit 0\n")
-        (prefix / "bin" / command).chmod(0o755)
+    (prefix / "node").mkdir(parents=True)
+    with tarfile.open(node.tarball) as tar:
+        tar.extractall(prefix / "node", filter="data")
+    (prefix / "node" / f"node-v{node.version}-{node.platform}").rename(
+        prefix / "node" / node.version
+    )
+    npm_bin = prefix / "node" / node.version / "bin"
+    monkeypatch.setenv("npm_config_cache", str(tmp_path / "npm-cache"))
+    with serve_files({}) as registry:
+        registry.files.update(registry_files(registry.url, PACKAGES))
+        monkeypatch.setenv("npm_config_registry", registry.url)
+        for package, (version, _command) in PACKAGES.items():
+            subprocess.run(
+                [
+                    str(npm_bin / "node"),
+                    str(npm_bin / "npm"),
+                    "install",
+                    "--global",
+                    "--prefix",
+                    str(prefix),
+                    "--no-audit",
+                    "--no-fund",
+                    f"{package}@{version}",
+                ],
+                check=True,
+                capture_output=True,
+                env={**os.environ, "PATH": f"{npm_bin}:{os.environ['PATH']}"},
+            )
     (home / ".local/bin").mkdir(parents=True)
     (home / ".bash_profile").write_text('export PATH="$HOME/.local/bin:$PATH"\n')
 
-    args = [*inputs(tmp_path), "--connection", "local", "--limit", "host-a", "--yes", "--json"]
+    lock = example_lock()
+    lock["node"] = {"version": node.version, "sha256": node.sha256}
+    args = inputs(tmp_path, lock=lock) + [
+        "--connection",
+        "local",
+        "--limit",
+        "host-a",
+        "--yes",
+        "--json",
+    ]
     assert main(["apply", *args]) == 0
     payload = json.loads(capsys.readouterr().out)
     (host,) = payload["hosts"]

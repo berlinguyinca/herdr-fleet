@@ -74,31 +74,59 @@ tests. Before a lock is rolled to the fleet, run `herdr-fleet plan --check` then
 one real Debian host with a systemd user manager and once on a real Mac and confirm the second
 `plan --check` exits 0.
 
-## Test doubles that remain, and what they are
+## Test doubles
 
-The rule is no mocks, stubs or fakes. These are the exceptions, stated precisely.
+The rule is no mocks, stubs or fakes. After the slice-3 review follow-up there are no stand-ins for
+Node, npm, herdr, the herdr server or pip left in the host-side tests.
 
-Replaced by the real thing (slice 3 review):
+Real artifacts (`tests/artifacts.py`): the pinned Node.js tarball from nodejs.org and the pinned
+herdr release binary from GitHub. Each is downloaded once into `$HERDR_FLEET_TEST_CACHE` (default
+`.test-cache/` in the repository, git-ignored, never the real home) and its sha256 is re-checked on
+every use, against the pins in `tests/containers/fixtures/fleet.lock.yaml`. Without network and
+without a cached copy these tests skip with the URL in the reason; they never fall back to a fake.
 
+- `tests/test_herdr_apply.py` serves the real herdr binary from the local HTTP mirror and runs it
+  (`--version`, `status`) for real. herdr resolves its socket from the account's real home, not from
+  `$HOME`, so `isolate_herdr` points `HERDR_SOCKET_PATH`, `HERDR_CLIENT_SOCKET_PATH` and the XDG
+  directories at a throwaway directory; the binary reports "server not running" and never reaches
+  the operator's server. No herdr process is started.
+- `tests/test_toolchain_apply.py` serves the real Node tarball plus a local npm registry
+  (`tests/local_registry.py`: real packument JSON, real `.tgz` packages with sha512 integrity) and the
+  role runs a real `npm install --global` against it (`npm_config_registry`, throwaway npm cache).
+  `tests/test_cli_check_inprocess.py` prepares its prefix the same way (real Node extracted, real
+  `npm install --global`).
 - `npm` in `tests/test_stage_release.py` and `tests/test_pi_runtime_apply.py` is the host's real
-  `npm` and `node` (symlinked into the managed toolchain `bin` for the role test, no wrapper). It
-  runs a real `npm ci` on a tiny package (`tests/real_npm.py`) whose only dependency is a `file:`
-  directory in the same repository and whose `package-lock.json` was written by real npm, so no
-  registry is needed. A real `prepare` lifecycle script logs the `PATH` npm ran with. npm's HOME and
-  cache are throwaway. Without node and npm on `PATH` these tests skip.
+  `npm` and `node` running a real `npm ci` on a tiny package (`tests/real_npm.py`) whose only
+  dependency is a `file:` directory. Without node and npm on `PATH` these tests skip.
+- pip in `tests/test_python_requirements*.py` is the real pip, installing real wheels from a local
+  wheel directory and index (`tests/wheels.py`) with `--require-hashes`.
+- The one-line "binaries" in `tests/test_fingerprint_probe.py` and `tests/test_baseline_apply.py`
+  are symlinks to the real `/usr/bin/true` and `/usr/bin/false`.
 
-Still doubles, because the real thing needs the internet or cannot run on the host:
+What is still not a real counterpart, stated precisely:
 
-- `FAKE_HERDR` in `tests/test_herdr_apply.py` is a shell script with canned answers to `--version`
-  and `status`, served by a local HTTP mirror. It is a stub: it proves the role's download, sha256
-  check, install, mode, symlink handling and drift messages, not that the real herdr runs. The real
-  release binary is exercised only in `tests/containers/test_installer_scenarios.py`, never on the
-  host.
-- `FAKE_NODE` and `FAKE_NPM` in `tests/test_toolchain_apply.py` are canned scripts inside a node
-  tarball built on the fly: the toolchain role downloads Node and runs `npm install --global
-  <pkg>@<version>` from a registry, which cannot be done offline. They prove the role's
-  verification, extraction, shims and idempotence. The real Node 22.23.2 and real global CLIs are
-  covered by the container scenarios.
-- The `#!/bin/sh` one-liners in `tests/test_fingerprint_probe.py` and
-  `tests/test_cli_check_inprocess.py` are fixtures standing in for binaries on `PATH` whose only
-  observable behaviour is their exit status or a version line.
+- A running herdr server. Starting one would spawn a real terminal multiplexer process, so the
+  host tests never do; the "running server older than the binary" case is covered by parsing tests
+  (`tests/test_herdr.py`) and not by a live server. The container scenarios assert that no herdr
+  process was started either.
+- The local npm registry is a small HTTP server in the test code, serving real package tarballs: it
+  is the registry that is ours, npm is the real client.
+- Files such as `#!/bin/sh` decoys written by a few tests (a pre-existing foreign `herdr`, a decoy
+  `pi` on `PATH` in the container scenario) are fixtures describing what is already on the host,
+  and are expected to be replaced or ignored by the role, not stand-ins for a dependency.
+- Wheels are built with the standard library (`tests/wheels.py`) rather than downloaded; pip build
+  isolation still fetches build-backend requirements of the release directory unhashed (documented
+  in `docs/follow-ups/python-dependencies-are-not-pinned.md`).
+
+### systemd user units and linger
+
+Not automated, and the reason is verified, not assumed. A systemd-capable container (systemd as
+PID 1 for `systemctl --user`) was tried with Docker 29 on cgroup v2: systemd exits with status 255
+immediately unless the container is `--privileged` or bind-mounts the host's `/sys/fs/cgroup`
+read-write, even with `--cgroupns private`, `SYS_ADMIN`, `seccomp=unconfined`,
+`apparmor=unconfined` and `systempaths=unconfined`. The harness rules forbid `--privileged` and do
+not expose host state to a container, so the path stays a manual canary. Apptainer cannot run
+systemd as PID 1 unprivileged. What is covered: the rendered unit text, `fabric.env` (0600), the
+probes and the `unmanaged` fingerprint without a user manager, and `systemd-analyze --user verify`
+of the rendered unit on the host (`test_the_rendered_unit_is_accepted_by_systemd_analyze`).
+macOS paths (launchd, Homebrew probes) are likewise manual.

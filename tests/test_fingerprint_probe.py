@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,10 @@ LOCAL = {
 }
 
 
+TRUE = Path(shutil.which("true") or "/usr/bin/true")  # real executables, no scripts
+FALSE = Path(shutil.which("false") or "/usr/bin/false")
+
+
 def fingerprint_in(home: Path, monkeypatch: pytest.MonkeyPatch) -> Fingerprint:
     monkeypatch.setenv("HOME", str(home))
     result = run_playbook(LOCAL, example_extra_vars(), Mode.VERIFY)
@@ -40,8 +45,7 @@ def test_profile_noise_does_not_break_the_resolved_path(
     shim_dir = tmp_path / ".local" / "bin"
     shim_dir.mkdir(parents=True)
     shim = shim_dir / "pi"
-    shim.write_text("#!/bin/sh\nexit 0\n")
-    shim.chmod(0o755)
+    shim.symlink_to(TRUE)
     (tmp_path / ".bash_profile").write_text(
         'echo "Welcome! last login: never"\nexport PATH="$HOME/.local/bin:$PATH"\n'
     )
@@ -72,8 +76,7 @@ def install_pi(home: Path, *, target: str | None, shim_exit: int = 0) -> None:
         real.symlink_to(target)
     (home / ".local" / "bin").mkdir(parents=True, exist_ok=True)
     shim = home / ".local" / "bin" / "pi"
-    shim.write_text(f"#!/bin/sh\nexit {shim_exit}\n")
-    shim.chmod(0o755)
+    shim.symlink_to(TRUE if shim_exit == 0 else FALSE)
 
 
 def health_fields(home: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -95,7 +98,7 @@ def test_shim_that_exits_nonzero_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     real = tmp_path / "real-pi"
-    real.write_text("#!/bin/sh\nexit 0\n")
+    real.symlink_to(TRUE)
     install_pi(tmp_path, target=str(real), shim_exit=3)
     assert "shim pi-cli" in health_fields(tmp_path, monkeypatch)
 
@@ -104,7 +107,7 @@ def test_healthy_shim_has_no_health_differences(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     real = tmp_path / "real-pi"
-    real.write_text("#!/bin/sh\nexit 0\n")
+    real.symlink_to(TRUE)
     install_pi(tmp_path, target=str(real))
     (tmp_path / ".bash_profile").write_text('export PATH="$HOME/.local/bin:$PATH"\n')
     assert health_fields(tmp_path, monkeypatch) == []

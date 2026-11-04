@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -192,14 +193,13 @@ def test_no_privilege_probe_when_nothing_privileged_is_pending(home: Path) -> No
 
 @pytest.mark.parametrize(
     ("script", "expected"),
-    [("exit 0", "up"), ("exit 1", "down")],
+    [("true", "up"), ("false", "down")],
 )
 def test_tailscale_up_and_down_are_reported_and_never_drift(
     home: Path, tmp_path: Path, script: str, expected: str
 ) -> None:
     tool = tmp_path / "tailscale"
-    tool.write_text(f"#!/bin/sh\n{script}\n")
-    tool.chmod(0o755)
+    tool.symlink_to(shutil.which(script) or f"/usr/bin/{script}")  # the real true / false
     assert section(baseline_tailscale=str(tool)).tailscale == expected
     assert [m for m in messages(baseline_tailscale=str(tool)) if "tailscale" in m.lower()] == []
 

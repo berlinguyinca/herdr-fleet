@@ -1,6 +1,6 @@
 """A real local HTTP server for hermetic role tests.
 
-It serves whatever bytes a test registers (a fake release asset, an archive, a script) and counts
+It serves whatever bytes a test registers (a release asset, an archive, a package) and counts
 every request, so a test can prove that check mode made none. Nothing here is a mock: Ansible's
 ``get_url`` talks to it over a real socket.
 """

@@ -121,7 +121,7 @@ mismatch. Without the field nothing changes and `plan` prints the note "unpinned
 dependencies". First understood by herdr-fleet 0.1.0. See
 `docs/follow-ups/python-dependencies-are-not-pinned.md` for what remains.
 
-Not automated: systemd user units and linger (no user manager in the test containers) and macOS.
+Not automated: systemd user units and linger (systemd cannot run as PID 1 in the harness without `--privileged`; see `docs/testing.md`) and macOS.
 Run `plan --check` and `apply` once on a real Debian host and a real Mac as a manual canary before
 rolling a lock to the fleet.
 

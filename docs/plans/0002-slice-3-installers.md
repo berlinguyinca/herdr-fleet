@@ -1,6 +1,6 @@
 # 0002 - Slice 3: `herdr`, `herdr-engineering`, `pi-runtime`, `baseline` installers
 
-Status: implemented (T0-T10) on `feat/slice-3-installers`, pending the manual canary (section 7: systemd user units, linger, macOS). Implementation plan for spec 0001, slice 3.
+Status: implemented (T0-T10) on `feat/slice-3-installers`, plus the review follow-up (real Node, npm, herdr and pip in the host tests; optional hashed Python requirements, `python_requirements`). Still open: the manual canary (systemd user units, linger, macOS; a systemd container is not feasible without `--privileged`, see docs/testing.md) and herdr-engineering committing its own hashed lock. Implementation plan for spec 0001, slice 3.
 Branch: `feat/slice-3-installers`
 
 Citations: `HE:` means the read-only checkout of herdr-engineering (`ansible/...`, `scripts/...`,
@@ -90,8 +90,8 @@ Existing herdr-fleet model (HF):
   `{version, sha256{linux-x64|linux-arm64|darwin-x64|darwin-arm64}}`, `repos.{herdr-engineering,
   pi-engineering, autospec}` as full commit IDs, strict `additionalProperties: false`, `version: 1`.
   Config schema already has `services.gateway.url` and the four role names.
-- Test layers: unit; real `ansible-playbook` in-process with a local HTTP mirror serving a fake Node
-  (`tests/test_toolchain_apply.py`, throwaway `HOME`); container scenarios on Docker and Apptainer
+- Test layers: unit; real `ansible-playbook` in-process with a local HTTP mirror serving the real Node tarball
+  (`tests/test_toolchain_apply.py`, throwaway `HOME`; now with the real Node and a local npm registry, see docs/testing.md); container scenarios on Docker and Apptainer
   (`tests/containers/`, non-root, no sudo, `--cap-drop ALL`, repo read-only, `fleet` user, real
   downloads, fixture `tests/containers/fixtures/fleet.lock.yaml`).
 
