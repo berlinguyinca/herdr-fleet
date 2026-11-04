@@ -626,3 +626,19 @@ Acceptance: docs describe the pending-marker pattern, privilege rule, `repo_urls
 10. Which role installs autospec? Default: none yet.
 11. Repo URLs in the lock (`repo_urls`) rather than config? Default: lock, optional, defaulting to the
     current GitHub URLs.
+
+## 12. Review-fix status (final)
+
+Closed after review: baseline escalates with explicit `sudo -n -- ...` argv (no `become`), proven
+by a Docker test with a real restricted sudoers file; the stager prints the failing command's output
+tail and exits 1; `pip check` after `--no-deps`; the venv is rebuilt when the requirements hash
+changes; requirement files need at least one requirement and `--hash=sha256:` on every line; service
+and repository URLs forbid `?`, `#` and backtick; a duplicated `fabric.env` key is drift and apply
+leaves one line; local Pi paths outside the managed release root are never repointed; an
+off-PATH `herdr`/`herdr-eng` is an informational note; malformed Pi `settings.json` is drift and its
+mode is kept; probes set `PYTHONDONTWRITEBYTECODE=1`.
+
+Not closed: the `acquire_settings_lock` stale-lock check/`rmdir` window (documented in the code,
+same as Pi's own protocol, fleet stagers are serialized by `stage.lock`); the hand-written
+`tests/local_registry.py` (documented exception, see docs/testing.md); `PATH` and
+`DEBIAN_FRONTEND` are not carried through `sudo`.
