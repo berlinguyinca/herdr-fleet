@@ -95,9 +95,17 @@ def messages(**over: object) -> list[str]:
     return [d.message for d in compare_baseline(verify(**over), pins_with(packages))]  # type: ignore[arg-type]
 
 
-def untouched(home: Path) -> bool:
-    """Nothing but ansible's own scratch directory exists in the throwaway HOME."""
-    return [p.name for p in home.iterdir() if p.name != ".ansible"] == []
+def stray(home: Path) -> list[str]:
+    """Every path in the throwaway HOME other than ansible's own scratch directory.
+
+    ``.ansible`` is where ansible keeps its per-user temporary files; nothing else may appear.
+    Asserting ``stray(home) == []`` makes a failure list exactly which entries were created.
+    """
+    return sorted(
+        f"{p.relative_to(home)}{'/' if p.is_dir() else ''}"
+        for p in home.rglob("*")
+        if p.relative_to(home).parts[0] != ".ansible"
+    )
 
 
 def mode_of(path: Path) -> str:
@@ -129,7 +137,7 @@ def test_second_apply_changes_nothing(home: Path) -> None:
 def test_check_on_a_fresh_home_reports_directories_and_writes_nothing(home: Path) -> None:
     events = converge(Mode.CHECK)
     assert changed(events) != []
-    assert untouched(home)
+    assert stray(home) == []
     assert messages() == [
         "dir ~/.config/herdr-engineering: expected mode 0700, found missing",
         "dir ~/.local/share/herdr-engineering: expected mode 0700, found missing",
@@ -169,7 +177,7 @@ def test_a_missing_package_is_pending_in_check_mode_and_nothing_is_written(home:
     events = converge(Mode.CHECK, baseline_packages=[*INSTALLED, ABSENT])
     assert f"install packages {ABSENT} (pending)" in changed(events)
     assert not any(t.status == "failed" for t in events.tasks)
-    assert untouched(home)
+    assert stray(home) == []
     assert (
         messages(baseline_packages=[*INSTALLED, ABSENT]).count(
             f"package {ABSENT}: expected installed, found missing"
@@ -182,7 +190,7 @@ def test_apply_without_root_names_the_exact_command_and_changes_nothing(home: Pa
     other = "herdr-fleet-test-absent-two"
     text = failure(baseline_packages=[*INSTALLED, ABSENT, other])
     assert f"sudo apt-get install -y {ABSENT} {other}" in text
-    assert untouched(home)
+    assert stray(home) == []
 
 
 def test_no_privilege_probe_when_nothing_privileged_is_pending(home: Path) -> None:

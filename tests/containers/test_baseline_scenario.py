@@ -177,3 +177,22 @@ def test_a_restricted_sudoers_that_allows_exactly_the_commands_installs_without_
     again = apply(box)
     assert again.returncode == 0, again.stdout + again.stderr
     assert json.loads(again.stdout)["changes_made"] == 0
+
+
+def test_a_run_with_unrestricted_passwordless_sudo_writes_nothing_outside_ansible_scratch(
+    sudo_box: DockerRuntime,
+) -> None:
+    """The CI runner case: sudo works without a password. Check and refused apply stay read-only."""
+    box = sudo_box
+    grant(box, "ALL")
+    assert box.sh("sudo -n true").returncode == 0
+    fresh = f"{HOME}/emptyhome"
+    box.sh(f"rm -rf {fresh} && mkdir -p {fresh}")
+
+    def listing() -> str:
+        found = box.sh(f"cd {fresh} && find . -mindepth 1 -not -path './.ansible*' | sort")
+        return found.stdout
+
+    run = box.exec(["env", f"HOME={fresh}", *cli("plan", "--check")])
+    assert run.returncode == 2, run.stdout + run.stderr
+    assert listing() == "", listing()
